@@ -170,6 +170,30 @@ jobs:
                 {ghActionsYaml}
               </pre>
             </div>
+
+            {/* Custom Domain & SSL Troubleshooting */}
+            <div className="p-3.5 bg-amber-950/40 rounded-xl border border-amber-600/50 space-y-2 shadow-xs">
+              <h5 className="font-bold text-amber-300 text-xs flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-amber-400" />
+                <span>自訂網域 (如 trippal.hermann.tw) 出現「不安全」排除指南</span>
+              </h5>
+              <div className="text-[11px] text-amber-100/90 space-y-1.5 leading-relaxed">
+                <p>
+                  當網址列出現紅色劃線 <span className="font-mono bg-amber-900/60 px-1 py-0.5 rounded text-amber-200">https://</span> 與「不安全」時，代表 SSL 憑證尚未生效：
+                </p>
+                <ol className="list-decimal list-inside space-y-1 text-amber-200/90 pl-1">
+                  <li>
+                    <strong>檢查 GitHub Pages 設定：</strong>進入 GitHub 倉庫 &gt; <strong>Settings</strong> &gt; <strong>Pages</strong>，確認 Custom domain 為 <code className="font-mono text-white">trippal.hermann.tw</code>，並確認下方<strong>「Enforce HTTPS」</strong>已打勾。
+                  </li>
+                  <li>
+                    <strong>等待 Let's Encrypt 憑證簽發：</strong>剛設定自訂網域或 DNS 變更後，GitHub 需 10~60 分鐘向 Let's Encrypt 簽發免費 SSL 憑證。
+                  </li>
+                  <li>
+                    <strong>檢查 DNS CNAME 指向：</strong>在您的 DNS 託管商 (如 Cloudflare/GoDaddy/Hinet) 確認有設定 CNAME 記錄：主機名稱 <code className="font-mono text-white">trippal</code> 指向 <code className="font-mono text-white">&lt;你的GitHub帳號&gt;.github.io</code>。
+                  </li>
+                </ol>
+              </div>
+            </div>
           </div>
         </div>
       </div>

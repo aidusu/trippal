@@ -6,7 +6,6 @@ import {
   Eye,
   EyeOff,
   LogIn,
-  UserPlus,
   Compass,
   Route,
   ShieldCheck,
@@ -14,7 +13,7 @@ import {
   AlertCircle,
   Loader2,
 } from 'lucide-react';
-import { signInUser, signUpUser } from '../services/firebaseService';
+import { signInUser } from '../services/firebaseService';
 import { AuthUser, DatabaseConfig } from '../types';
 
 interface LoginPageProps {
@@ -24,7 +23,6 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, kickedOutMessage }) => {
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -48,40 +46,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
       setErrorMessage('請輸入密碼');
       return;
     }
-    if (authMode === 'signup' && trimmedPass.length < 6) {
-      setErrorMessage('密碼長度至少需要 6 個字元');
-      return;
-    }
 
     setIsLoading(true);
     try {
-      if (authMode === 'signup') {
-        const result = await signUpUser(trimmedEmail, trimmedPass, dbConfig);
-        if (result.success && result.user) {
-          onLoginSuccess(result.user);
-        } else {
-          setErrorMessage(result.error || '註冊失敗，請確認資料後再試');
-        }
+      const result = await signInUser(trimmedEmail, trimmedPass, dbConfig);
+      if (result.success && result.user) {
+        onLoginSuccess(result.user);
       } else {
-        const result = await signInUser(trimmedEmail, trimmedPass, dbConfig);
-        if (result.success && result.user) {
-          onLoginSuccess(result.user);
-        } else {
-          setErrorMessage(result.error || 'Firebase 認證失敗：帳號或密碼不正確');
-        }
+        setErrorMessage(result.error || 'Firebase Authentication 認證失敗：帳號或密碼不正確');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || '認證發生錯誤，請稍後再試');
+      setErrorMessage(err.message || 'Firebase 認證發生錯誤，請稍後再試');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleQuickFill = (sampleEmail: string, samplePass: string = '123456') => {
+  const handleQuickFill = (sampleEmail: string) => {
     setEmail(sampleEmail);
-    setPassword(samplePass);
     setErrorMessage(null);
-    setInfoMessage(`已帶入帳號 ${sampleEmail} (密碼: ${samplePass})`);
+    setInfoMessage(`已帶入帳號 ${sampleEmail}，請輸入該帳號之 Firebase 密碼`);
+    const passInput = document.getElementById('input-login-password');
+    if (passInput) {
+      passInput.focus();
+    }
   };
 
   return (
@@ -95,7 +83,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
       <div className="flex-1 flex items-center justify-center p-4 sm:p-6 z-10">
         <div className="w-full max-w-md bg-[#1b3b17]/95 backdrop-blur-2xl border border-[#3e7237]/80 rounded-3xl shadow-2xl overflow-hidden p-6 sm:p-8">
           {/* Header Brand */}
-          <div className="text-center mb-5">
+          <div className="text-center mb-6">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 via-teal-500 to-green-600 flex items-center justify-center shadow-lg shadow-black/40 ring-1 ring-white/30 mb-3">
               <MapPin className="w-7 h-7 text-white stroke-[2.2]" />
             </div>
@@ -106,44 +94,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
               團體即時定位分享
             </p>
             <p className="text-xs text-emerald-100/75 mt-1 max-w-xs mx-auto leading-relaxed">
-              Firebase 安全認證 • 最近 3 筆移動軌跡 • 最多 7 人同行
+              Firebase Authentication 實體驗證 • 最多 7 人同行
             </p>
           </div>
 
-          {/* Mode Switcher (Sign In vs Sign Up) */}
-          <div className="grid grid-cols-2 p-1 bg-[#122810]/80 rounded-xl border border-[#2d5828] mb-4 text-xs font-bold">
-            <button
-              type="button"
-              id="tab-signin"
-              onClick={() => {
-                setAuthMode('signin');
-                setErrorMessage(null);
-              }}
-              className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                authMode === 'signin'
-                  ? 'bg-gradient-to-r from-emerald-600 to-green-600 text-white shadow-md'
-                  : 'text-emerald-200/70 hover:text-white'
-              }`}
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>登入帳號</span>
-            </button>
-            <button
-              type="button"
-              id="tab-signup"
-              onClick={() => {
-                setAuthMode('signup');
-                setErrorMessage(null);
-              }}
-              className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                authMode === 'signup'
-                  ? 'bg-gradient-to-r from-emerald-600 to-green-600 text-white shadow-md'
-                  : 'text-emerald-200/70 hover:text-white'
-              }`}
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>註冊帳號</span>
-            </button>
+          {/* Section Header */}
+          <div className="flex items-center gap-2 px-3 py-2 bg-[#122810]/80 rounded-xl border border-[#2d5828] mb-4 text-xs font-bold text-emerald-200">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <span>帳號登入 (已預先設定於 Firebase Authentication)</span>
           </div>
 
           {/* Error Message Box */}
@@ -179,7 +137,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="例如: abc@trip.com"
+                  placeholder="輸入您的 Firebase Email 帳號"
                   className="w-full pl-10 pr-3.5 py-2.5 bg-[#122810]/90 text-white placeholder-emerald-300/40 text-sm font-medium rounded-xl border border-[#2f5c29] focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all shadow-inner"
                 />
               </div>
@@ -191,9 +149,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
                 <label className="block text-xs font-semibold text-emerald-100">
                   密碼
                 </label>
-                {authMode === 'signup' && (
-                  <span className="text-[10px] text-emerald-300/70">至少 6 個字元</span>
-                )}
+                <span className="text-[10px] text-emerald-300/70 font-mono">Firebase Auth 安全保護</span>
               </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-emerald-400/80">
@@ -205,13 +161,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={authMode === 'signup' ? '設定 6 位以上密碼' : '輸入帳號密碼'}
+                  placeholder="輸入 Firebase Authentication 密碼"
                   className="w-full pl-10 pr-10 py-2.5 bg-[#122810]/90 text-white placeholder-emerald-300/40 text-sm font-medium rounded-xl border border-[#2f5c29] focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition-all shadow-inner"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-emerald-400/70 hover:text-white"
+                  title={showPassword ? '隱藏密碼' : '顯示密碼'}
                 >
                   {showPassword ? (
                     <EyeOff className="w-4 h-4" />
@@ -232,12 +189,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
               {isLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                  <span>{authMode === 'signup' ? '建立帳號中...' : '驗證登入中...'}</span>
-                </>
-              ) : authMode === 'signup' ? (
-                <>
-                  <UserPlus className="w-4 h-4 stroke-[2.5]" />
-                  <span>建立帳號並登入</span>
+                  <span>Firebase 驗證登入中...</span>
                 </>
               ) : (
                 <>
@@ -253,9 +205,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
             <div className="flex items-center justify-between text-[11px] text-emerald-200/80 mb-2">
               <span className="flex items-center gap-1 font-semibold text-emerald-100">
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>快速選填範例帳號：</span>
+                <span>快速帶入 7 組授權 Email 帳號：</span>
               </span>
-              <span className="text-[10px] text-emerald-300/60 font-mono">上限 7 人</span>
+              <span className="text-[10px] text-emerald-300/60 font-mono">共 7 組</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               <button
@@ -300,13 +252,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
               >
                 xyz@trip.com
               </button>
+              <button
+                type="button"
+                onClick={() => handleQuickFill('hermann@trip.com')}
+                className="col-span-2 sm:col-span-3 px-2 py-1.5 bg-[#122810]/80 hover:bg-[#1a3817] text-emerald-300 rounded-lg text-xs font-mono border border-[#2f5c29] transition-colors truncate text-center shadow-xs"
+              >
+                hermann@trip.com (主辦人)
+              </button>
             </div>
           </div>
 
           {/* Bottom Prompt Note */}
           <div className="mt-4 pt-3 border-t border-[#2d5828]/60 text-center">
             <p className="text-xs text-emerald-200/80 font-medium leading-relaxed">
-              登入後預設以 Email 前綴為暱稱 (例如 <span className="text-white font-mono font-bold">abc</span>)，可隨時修改；若同帳號在其他裝置登入將自動踢出前次連線。
+              點擊帳號可快速帶入 Email；密碼由 Google Firebase Authentication 嚴格校驗，前端及資料庫規則均不儲存任何密碼。
             </p>
           </div>
         </div>
@@ -317,7 +276,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, dbConfig, 
         <div className="max-w-md mx-auto flex items-center justify-center gap-4 text-[11px] font-medium">
           <span className="flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-300" />
-            <span>Firebase 認證機制</span>
+            <span>Firebase 實體認證機制</span>
           </span>
           <span className="flex items-center gap-1">
             <Route className="w-3.5 h-3.5 text-teal-300" />

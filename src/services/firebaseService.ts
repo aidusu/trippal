@@ -12,7 +12,6 @@ import {
 import {
   getAuth,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   Auth,
@@ -268,7 +267,8 @@ export function subscribeToUserSession(
 }
 
 /**
- * Sign In with Email & Password (Strict Firebase Verification & Single-Session Registration)
+ * Sign In with Email & Password (Strictly verified against Google Firebase Authentication)
+ * No passwords are stored or visible in frontend or database rules.
  */
 export async function signInUser(
   email: string,
@@ -285,8 +285,8 @@ export async function signInUser(
   // Generate unique session identifier for this new login
   const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
-  // 1. Try Firebase Auth SDK if available
-  const { auth, db } = initFirebase(config);
+  // 1. Try Firebase Auth SDK
+  const { auth } = initFirebase(config);
   if (auth && config.apiKey) {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPass);
@@ -309,12 +309,23 @@ export async function signInUser(
       if (
         fbErr.code === 'auth/invalid-credential' || 
         fbErr.code === 'auth/wrong-password' || 
-        fbErr.code === 'auth/user-not-found' ||
         fbErr.code === 'auth/invalid-login-credentials'
       ) {
         return { 
           success: false, 
-          error: 'Firebase 帳號或密碼不正確。若您尚未建立帳號，請切換至「註冊帳號」先完成建立。' 
+          error: 'Firebase 帳號或密碼不正確，請重新確認輸入。' 
+        };
+      }
+      if (fbErr.code === 'auth/user-not-found') {
+        return {
+          success: false,
+          error: '此 Email 帳號尚未在 Firebase Authentication 中建立。',
+        };
+      }
+      if (fbErr.code === 'auth/user-disabled') {
+        return {
+          success: false,
+          error: '此帳號已被 Firebase 停用。',
         };
       }
       if (fbErr.code === 'auth/invalid-email') {
@@ -323,167 +334,85 @@ export async function signInUser(
       if (fbErr.code === 'auth/too-many-requests') {
         return { success: false, error: '登入嘗試次數過多，已被暫時鎖定，請稍後再試' };
       }
+      // If error is missing API key
+      if (fbErr.code === 'auth/api-key-not-valid' || fbErr.code === 'auth/invalid-api-key') {
+        return { success: false, error: 'Firebase Web API Key 無效，請至設定檢查 API Key。' };
+      }
       return {
         success: false,
-        error: `Firebase 認證失敗 (${fbErr.code || fbErr.message || '請確認帳號與密碼'})`,
+        error: `Firebase 認證失敗：${fbErr.message || fbErr.code || '請確認帳號與密碼'}`,
       };
     }
   }
 
-  // 2. Strict Realtime Database user registry authentication
-  // Checks `users/{emailKey}` in Firebase Realtime Database
-  try {
-    const key = sanitizeEmailKey(trimmedEmail);
-    let cleanUrl = config.databaseUrl.trim();
-    if (!cleanUrl.startsWith('http')) cleanUrl = `https://${cleanUrl}`;
-    if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
-
-    const res = await fetch(`${cleanUrl}/users/${key}.json`);
-    if (res.ok) {
-      const userData = await res.json();
-      if (!userData) {
-        return {
-          success: false,
-          error: '此帳號尚未在 Firebase 建立！請先切換至「註冊帳號」建立此 Email 與密碼。',
-        };
-      }
-
-      if (userData.password !== trimmedPass) {
-        return {
-          success: false,
-          error: '密碼不正確，請重新輸入！',
-        };
-      }
-
-      const appUser: AuthUser = {
-        uid: userData.uid || ('usr_' + key),
-        email: trimmedEmail,
-        nickname: userData.nickname || deriveNicknameFromEmail(trimmedEmail),
-        sessionId,
-      };
-
-      saveStoredAuthUser(appUser);
-      await registerUserSession(trimmedEmail, sessionId, config);
-      return { success: true, user: appUser };
-    } else {
-      return {
-        success: false,
-        error: '無法連線至 Firebase 即時資料庫進行認證，請檢查網路或資料庫網址。',
-      };
-    }
-  } catch (err: any) {
-    return {
-      success: false,
-      error: 'Firebase 認證連線失敗：' + (err.message || '請檢查網路連線'),
-    };
-  }
-}
-
-/**
- * Sign Up with Email & Password (Strict registration in Firebase RTDB / Auth)
- */
-export async function signUpUser(
-  email: string,
-  pass: string,
-  config: DatabaseConfig = getSavedDbConfig()
-): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
-  const trimmedEmail = email.trim();
-  const trimmedPass = pass.trim();
-
-  if (!trimmedEmail || !trimmedPass) {
-    return { success: false, error: '請輸入有效的 Email 與密碼' };
-  }
-  if (trimmedPass.length < 6) {
-    return { success: false, error: '密碼長度至少需要 6 個字元' };
-  }
-
-  const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
-  const { auth } = initFirebase(config);
-
-  if (auth && config.apiKey) {
+  // 2. Direct Firebase Authentication REST API Verification (Google Identity Toolkit)
+  // Uses official endpoint: identitytoolkit.googleapis.com/v1/accounts:signInWithPassword
+  if (config.apiKey) {
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPass);
-      const fbUser = userCredential.user;
-      const appUser: AuthUser = {
-        uid: fbUser.uid,
-        email: fbUser.email || trimmedEmail,
-        nickname: deriveNicknameFromEmail(fbUser.email || trimmedEmail),
-        sessionId,
-      };
-      saveStoredAuthUser(appUser);
-      await registerUserSession(appUser.email, sessionId, config);
-      return { success: true, user: appUser };
-    } catch (fbErr: any) {
-      console.warn('Firebase Auth SDK signUp failed:', fbErr.code, fbErr.message);
-      if (fbErr.code === 'auth/email-already-in-use') {
-        return { success: false, error: '此 Email 已被註冊，請直接點擊「登入帳號」' };
-      }
-      if (fbErr.code === 'auth/weak-password') {
-        return { success: false, error: '密碼強度不足，請使用 6 位以上字元' };
-      }
-      if (fbErr.code === 'auth/invalid-email') {
-        return { success: false, error: 'Email 格式不正確' };
-      }
-    }
-  }
+      const restEndpoint = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(
+        config.apiKey
+      )}`;
+      const res = await fetch(restEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: trimmedEmail,
+          password: trimmedPass,
+          returnSecureToken: true,
+        }),
+      });
 
-  // Register in Firebase Realtime Database
-  try {
-    const key = sanitizeEmailKey(trimmedEmail);
-    let cleanUrl = config.databaseUrl.trim();
-    if (!cleanUrl.startsWith('http')) cleanUrl = `https://${cleanUrl}`;
-    if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
+      const data = await res.json();
 
-    // Check if user already exists
-    const checkRes = await fetch(`${cleanUrl}/users/${key}.json`);
-    if (checkRes.ok) {
-      const existing = await checkRes.json();
-      if (existing) {
+      if (res.ok && data.localId) {
+        const customNick =
+          localStorage.getItem(`trippal_nick_${data.localId}`) ||
+          deriveNicknameFromEmail(data.email || trimmedEmail);
+        const appUser: AuthUser = {
+          uid: data.localId,
+          email: data.email || trimmedEmail,
+          nickname: customNick,
+          sessionId,
+        };
+
+        saveStoredAuthUser(appUser);
+        await registerUserSession(appUser.email, sessionId, config);
+        return { success: true, user: appUser };
+      } else {
+        const errMsg = data.error?.message || '';
+        if (
+          errMsg === 'INVALID_LOGIN_CREDENTIALS' ||
+          errMsg === 'INVALID_PASSWORD' ||
+          errMsg === 'EMAIL_NOT_FOUND'
+        ) {
+          return {
+            success: false,
+            error: 'Firebase 認證失敗：帳號或密碼不正確，請確認此 Email 已建立於 Firebase Authentication。',
+          };
+        }
+        if (errMsg === 'USER_DISABLED') {
+          return { success: false, error: '此帳號已被 Firebase 停用。' };
+        }
+        if (errMsg === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
+          return { success: false, error: '登入嘗試次數過多已被暫時鎖定，請稍後再試。' };
+        }
         return {
           success: false,
-          error: '此 Email 已在 Firebase 註冊，請切換至「登入帳號」並輸入密碼。',
+          error: `Firebase Authentication 錯誤：${errMsg || '認證失敗'}`,
         };
       }
-    }
-
-    const uid = 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-    const newUserData = {
-      uid,
-      email: trimmedEmail,
-      nickname: deriveNicknameFromEmail(trimmedEmail),
-      password: trimmedPass,
-      createdAt: Date.now(),
-    };
-
-    const putRes = await fetch(`${cleanUrl}/users/${key}.json`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newUserData),
-    });
-
-    if (!putRes.ok) {
+    } catch (restErr: any) {
       return {
         success: false,
-        error: '建立帳號失敗，請確認 Firebase 即時資料庫 Rules 是否允許寫入。',
+        error: '無法連線至 Firebase Authentication 認證伺服器：' + (restErr.message || '請檢查網路'),
       };
     }
-
-    const appUser: AuthUser = {
-      uid,
-      email: trimmedEmail,
-      nickname: newUserData.nickname,
-      sessionId,
-    };
-
-    saveStoredAuthUser(appUser);
-    await registerUserSession(trimmedEmail, sessionId, config);
-    return { success: true, user: appUser };
-  } catch (err: any) {
-    return {
-      success: false,
-      error: '註冊帳號時發生錯誤：' + (err.message || '請稍後再試'),
-    };
   }
+
+  return {
+    success: false,
+    error: '請先在資料庫設定中確認 Firebase Web API Key，以啟用 Firebase Authentication 實體驗證機制。',
+  };
 }
 
 /**
