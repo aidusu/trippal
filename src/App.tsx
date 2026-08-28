@@ -1,0 +1,511 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Header } from './components/Header';
+import { MapView } from './components/MapView';
+import { SendLocationPanel } from './components/SendLocationPanel';
+import { FriendListDrawer } from './components/FriendListDrawer';
+import { SettingsModal } from './components/SettingsModal';
+import { GitHubPagesModal } from './components/GitHubPagesModal';
+import {
+  LocationRecord,
+  UserTrail,
+  DatabaseConfig,
+  GeolocationState,
+} from './types';
+import {
+  getSavedDbConfig,
+  saveDbConfig,
+  sendLocationRecord,
+  subscribeToLocations,
+  getLocalFallbackRecords,
+  clearLocalFallbackRecords,
+} from './services/firebaseService';
+import { buildUserTrails } from './utils/trails';
+import { getOrCreateUUID, formatDateTime } from './utils/colors';
+import { AlertCircle, CheckCircle, Navigation, Sparkles } from 'lucide-react';
+
+export default function App() {
+  // 1. User Identity States
+  const [uuid] = useState<string>(() => getOrCreateUUID());
+  const [nickname, setNickname] = useState<string>(() => {
+    return localStorage.getItem('trippal_nickname') || '';
+  });
+
+  // 2. Geolocation State
+  const [currentLocation, setCurrentLocation] = useState<GeolocationState>({
+    coords: null,
+    error: null,
+    isLocating: true,
+    lastUpdated: null,
+  });
+
+  // 3. Database & Records States
+  const [dbConfig, setDbConfig] = useState<DatabaseConfig>(() => getSavedDbConfig());
+  const [rawRecords, setRawRecords] = useState<LocationRecord[]>([]);
+  const [isRealtime, setIsRealtime] = useState<boolean>(true);
+  const [dbConnected, setDbConnected] = useState<boolean>(true);
+
+  // 4. Action States
+  const [isSending, setIsSending] = useState<boolean>(false);
+  const [lastSentTime, setLastSentTime] = useState<number | null>(null);
+  const [autoSendInterval, setAutoSendInterval] = useState<number>(0);
+  const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<{
+    text: string;
+    type: 'success' | 'error' | 'info';
+  } | null>(null);
+
+  // 5. Modals States
+  const [isFriendsOpen, setIsFriendsOpen] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isGithubModalOpen, setIsGithubModalOpen] = useState<boolean>(false);
+
+  const autoSendTimerRef = useRef<number | null>(null);
+
+  // Show auto-expiring toast
+  const showToast = useCallback(
+    (text: string, type: 'success' | 'error' | 'info' = 'info') => {
+      setToastMessage({ text, type });
+      setTimeout(() => {
+        setToastMessage((prev) => (prev?.text === text ? null : prev));
+      }, 4000);
+    },
+    []
+  );
+
+  // Save nickname to localStorage
+  const handleNicknameChange = (name: string) => {
+    setNickname(name);
+    localStorage.setItem('trippal_nickname', name);
+  };
+
+  // Obtain GPS Location (HTML5 Geolocation API)
+  const refreshLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setCurrentLocation((prev) => ({
+        ...prev,
+        isLocating: false,
+        error: '您的瀏覽器不支援 GPS 地理定位',
+      }));
+      return;
+    }
+
+    setCurrentLocation((prev) => ({ ...prev, isLocating: true, error: null }));
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setCurrentLocation({
+          coords: {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            speed: position.coords.speed,
+            heading: position.coords.heading,
+          },
+          error: null,
+          isLocating: false,
+          lastUpdated: Date.now(),
+        });
+      },
+      (error) => {
+        console.warn('Geolocation error:', error.message);
+        // Fallback default coordinates (Taipei 101 area) for seamless exploration if GPS is blocked
+        setCurrentLocation((prev) => ({
+          coords: prev.coords || {
+            latitude: 25.0339,
+            longitude: 121.5644,
+            accuracy: 60,
+            speed: null,
+            heading: null,
+          },
+          error: '無法存取精確 GPS，已使用預設探索位置 (可開啟瀏覽器定位權限後重試)',
+          isLocating: false,
+          lastUpdated: Date.now(),
+        }));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 5000,
+      }
+    );
+  }, []);
+
+  // Continuous Geolocation Watch
+  useEffect(() => {
+    refreshLocation();
+
+    if (!navigator.geolocation) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setCurrentLocation({
+          coords: {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            speed: pos.coords.speed,
+            heading: pos.coords.heading,
+          },
+          error: null,
+          isLocating: false,
+          lastUpdated: Date.now(),
+        });
+      },
+      (err) => {
+        console.warn('WatchPosition notice:', err.message);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 10000,
+      }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [refreshLocation]);
+
+  // Subscribe to Firebase Realtime Database
+  useEffect(() => {
+    const unsubscribe = subscribeToLocations(
+      (records, realtime) => {
+        setRawRecords(records);
+        setIsRealtime(realtime);
+        setDbConnected(true);
+      },
+      (error) => {
+        console.warn('Firebase sync warning:', error);
+        setDbConnected(false);
+      },
+      dbConfig
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [dbConfig]);
+
+  // Handle Send Location to Firebase
+  const handleSendLocation = async () => {
+    if (!nickname.trim()) {
+      showToast('請先輸入「暱稱」！', 'error');
+      return;
+    }
+
+    // If no coordinates yet, try to obtain them first
+    let lat = currentLocation.coords?.latitude;
+    let lng = currentLocation.coords?.longitude;
+    let accuracy = currentLocation.coords?.accuracy;
+
+    if (!lat || !lng) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              lat = pos.coords.latitude;
+              lng = pos.coords.longitude;
+              accuracy = pos.coords.accuracy;
+              setCurrentLocation({
+                coords: {
+                  latitude: lat,
+                  longitude: lng,
+                  accuracy,
+                  speed: pos.coords.speed,
+                  heading: pos.coords.heading,
+                },
+                error: null,
+                isLocating: false,
+                lastUpdated: Date.now(),
+              });
+              resolve();
+            },
+            (err) => {
+              reject(err);
+            },
+            { enableHighAccuracy: true, timeout: 5000 }
+          );
+        });
+      } catch (e) {
+        // Fallback default
+        lat = 25.0339;
+        lng = 121.5644;
+      }
+    }
+
+    setIsSending(true);
+    const now = Date.now();
+    const formatted = formatDateTime(now);
+
+    const record: LocationRecord = {
+      id: `loc_${now}_${Math.random().toString(36).substring(2, 7)}`,
+      uuid,
+      nickname: nickname.trim(),
+      timestamp: now,
+      formattedTime: formatted,
+      latitude: lat!,
+      longitude: lng!,
+      accuracy: accuracy || 15,
+      speed: currentLocation.coords?.speed || null,
+      heading: currentLocation.coords?.heading || null,
+    };
+
+    const res = await sendLocationRecord(record, dbConfig);
+    setIsSending(false);
+
+    if (res.success) {
+      setLastSentTime(now);
+      showToast(`已成功傳送位置！(${nickname})`, 'success');
+
+      // Optimistically insert to local view if not already included
+      setRawRecords((prev) => {
+        if (prev.some((r) => r.id === res.id)) return prev;
+        return [...prev, record];
+      });
+    } else {
+      showToast(res.error || '傳送失敗，已暫存至本地', 'error');
+    }
+  };
+
+  // Auto-send timer mechanism
+  useEffect(() => {
+    if (autoSendTimerRef.current) {
+      clearInterval(autoSendTimerRef.current);
+      autoSendTimerRef.current = null;
+    }
+
+    if (autoSendInterval > 0 && nickname.trim()) {
+      autoSendTimerRef.current = window.setInterval(() => {
+        handleSendLocation();
+      }, autoSendInterval * 1000);
+    }
+
+    return () => {
+      if (autoSendTimerRef.current) {
+        clearInterval(autoSendTimerRef.current);
+        autoSendTimerRef.current = null;
+      }
+    };
+  }, [autoSendInterval, nickname, currentLocation.coords, uuid, dbConfig]);
+
+  // Generate Demo Friends (Alice & Bob, each with 3 sequential locations)
+  const handleAddDemoFriends = () => {
+    const centerLat = currentLocation.coords?.latitude || 25.033;
+    const centerLng = currentLocation.coords?.longitude || 121.565;
+    const now = Date.now();
+
+    // Friend 1: 小萱 (3 points moving east)
+    const recordsFriend1: LocationRecord[] = [
+      {
+        id: `demo_1_${now - 120000}`,
+        uuid: 'demo-uuid-hsuan',
+        nickname: '小萱 (測試好友)',
+        timestamp: now - 120000,
+        formattedTime: formatDateTime(now - 120000),
+        latitude: centerLat + 0.0035,
+        longitude: centerLng - 0.004,
+        accuracy: 10,
+      },
+      {
+        id: `demo_1_${now - 60000}`,
+        uuid: 'demo-uuid-hsuan',
+        nickname: '小萱 (測試好友)',
+        timestamp: now - 60000,
+        formattedTime: formatDateTime(now - 60000),
+        latitude: centerLat + 0.002,
+        longitude: centerLng - 0.0015,
+        accuracy: 8,
+      },
+      {
+        id: `demo_1_${now}`,
+        uuid: 'demo-uuid-hsuan',
+        nickname: '小萱 (測試好友)',
+        timestamp: now,
+        formattedTime: formatDateTime(now),
+        latitude: centerLat + 0.001,
+        longitude: centerLng + 0.002,
+        accuracy: 6,
+      },
+    ];
+
+    // Friend 2: 阿凱 (3 points moving south)
+    const recordsFriend2: LocationRecord[] = [
+      {
+        id: `demo_2_${now - 150000}`,
+        uuid: 'demo-uuid-kai',
+        nickname: '阿凱 (測試好友)',
+        timestamp: now - 150000,
+        formattedTime: formatDateTime(now - 150000),
+        latitude: centerLat - 0.001,
+        longitude: centerLng - 0.003,
+        accuracy: 12,
+      },
+      {
+        id: `demo_2_${now - 80000}`,
+        uuid: 'demo-uuid-kai',
+        nickname: '阿凱 (測試好友)',
+        timestamp: now - 80000,
+        formattedTime: formatDateTime(now - 80000),
+        latitude: centerLat - 0.0025,
+        longitude: centerLng - 0.001,
+        accuracy: 9,
+      },
+      {
+        id: `demo_2_${now - 10000}`,
+        uuid: 'demo-uuid-kai',
+        nickname: '阿凱 (測試好友)',
+        timestamp: now - 10000,
+        formattedTime: formatDateTime(now - 10000),
+        latitude: centerLat - 0.004,
+        longitude: centerLng + 0.0015,
+        accuracy: 5,
+      },
+    ];
+
+    const combinedDemo = [...recordsFriend1, ...recordsFriend2];
+
+    // Add to records state
+    setRawRecords((prev) => {
+      const filtered = prev.filter(
+        (r) => r.nickname !== '小萱 (測試好友)' && r.nickname !== '阿凱 (測試好友)'
+      );
+      return [...filtered, ...combinedDemo];
+    });
+
+    // Also push to Firebase so other connected users can see if online
+    combinedDemo.forEach((rec) => {
+      sendLocationRecord(rec, dbConfig);
+    });
+
+    showToast('已產生 2 位好友各 3 筆測試軌跡，地圖已自動繪製連線！', 'success');
+  };
+
+  // Clear local storage fallback cache
+  const handleClearLocalCache = () => {
+    clearLocalFallbackRecords();
+    setRawRecords([]);
+  };
+
+  // Save new database config
+  const handleSaveDbConfig = (cfg: DatabaseConfig) => {
+    saveDbConfig(cfg);
+    setDbConfig(cfg);
+    showToast('Firebase 資料庫設定已更新！', 'success');
+  };
+
+  // Convert raw records into grouped trails (Last 3 per nickname, polyline connected)
+  const userTrails: UserTrail[] = buildUserTrails(rawRecords);
+
+  return (
+    <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 select-none">
+      {/* Top App Header */}
+      <Header
+        onlineCount={userTrails.length}
+        isRealtime={isRealtime}
+        dbConnected={dbConnected}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenFriends={() => setIsFriendsOpen(true)}
+        onOpenGithubGuide={() => setIsGithubModalOpen(true)}
+        onAddDemoFriends={handleAddDemoFriends}
+      />
+
+      {/* GPS Warning Banner if permission denied */}
+      {currentLocation.error && (
+        <div className="px-4 py-2.5 bg-amber-950/80 border-b border-amber-800/60 text-amber-200 text-xs flex items-center justify-between z-20 backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="font-medium">{currentLocation.error}</span>
+          </div>
+          <button
+            id="btn-retry-location-banner"
+            onClick={refreshLocation}
+            className="px-3 py-1 bg-amber-800/80 hover:bg-amber-700 text-white rounded-lg text-[11px] font-semibold shrink-0 transition-colors shadow-xs"
+          >
+            重新取得定位
+          </button>
+        </div>
+      )}
+
+      {/* Main Map View Area */}
+      <main className="flex-1 relative w-full h-full overflow-hidden">
+        <MapView
+          trails={userTrails}
+          currentLocation={currentLocation}
+          myNickname={nickname}
+          selectedUserId={selectedUser}
+          onSelectUser={(nick) => setSelectedUser(nick)}
+          onLocateMeRequest={refreshLocation}
+        />
+      </main>
+
+      {/* Bottom Send Location & Nickname Panel */}
+      <SendLocationPanel
+        nickname={nickname}
+        onNicknameChange={handleNicknameChange}
+        uuid={uuid}
+        currentLocation={currentLocation}
+        onSendLocation={handleSendLocation}
+        isSending={isSending}
+        lastSentTime={lastSentTime}
+        autoSendInterval={autoSendInterval}
+        onAutoSendIntervalChange={(sec) => setAutoSendInterval(sec)}
+        onRefreshLocation={refreshLocation}
+      />
+
+      {/* Floating Toast Alerts */}
+      {toastMessage && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-none">
+          <div
+            className={`px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold flex items-center gap-2 border backdrop-blur-xl pointer-events-auto ${
+              toastMessage.type === 'success'
+                ? 'bg-emerald-950/90 text-emerald-100 border-emerald-500/50 shadow-emerald-950/50'
+                : toastMessage.type === 'error'
+                ? 'bg-red-950/90 text-red-100 border-red-500/50 shadow-red-950/50'
+                : 'bg-slate-900/90 text-slate-100 border-slate-700/80 shadow-black/50'
+            }`}
+          >
+            {toastMessage.type === 'success' ? (
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            )}
+            <span>{toastMessage.text}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Friends List Drawer */}
+      <FriendListDrawer
+        isOpen={isFriendsOpen}
+        onClose={() => setIsFriendsOpen(false)}
+        trails={userTrails}
+        currentLocation={currentLocation}
+        onSelectUser={(nick) => {
+          setSelectedUser(nick);
+          setIsFriendsOpen(false);
+        }}
+      />
+
+      {/* Database Settings Modal (Firebase trippal-70d7d) */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        config={dbConfig}
+        onSaveConfig={handleSaveDbConfig}
+        onAddDemoFriends={handleAddDemoFriends}
+        onClearLocalCache={handleClearLocalCache}
+      />
+
+      {/* GitHub Pages Deployment & Share Guide Modal */}
+      <GitHubPagesModal
+        isOpen={isGithubModalOpen}
+        onClose={() => setIsGithubModalOpen(false)}
+      />
+    </div>
+  );
+}

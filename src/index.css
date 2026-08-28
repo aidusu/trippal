@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* Base Body Styles & Font smoothing */
+body {
+  font-family: 'Plus Jakarta Sans', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Leaflet Map & Custom Markers */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  font-family: inherit;
+  background-color: #020617 !important;
+}
+
+/* Custom Popup Style - Professional Polish */
+.custom-leaflet-popup .leaflet-popup-content-wrapper {
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 14px;
+  padding: 0;
+  box-shadow: 0 20px 30px -8px rgba(0, 0, 0, 0.6), 0 8px 16px -4px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  backdrop-filter: blur(12px);
+}
+
+.custom-leaflet-popup .leaflet-popup-content {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.custom-leaflet-popup .leaflet-popup-tip {
+  background: #0f172a;
+  border: 1px solid rgba(51, 65, 85, 0.85);
+  border-top: none;
+  border-left: none;
+}
+
+.custom-leaflet-popup a.leaflet-popup-close-button {
+  top: 10px;
+  right: 10px;
+  color: #94a3b8;
+  padding: 4px;
+  font-size: 16px;
+  transition: color 0.15s ease;
+}
+
+.custom-leaflet-popup a.leaflet-popup-close-button:hover {
+  color: #f8fafc;
+}
+
+/* Tooltip style */
+.leaflet-custom-tooltip {
+  background: rgba(15, 23, 42, 0.95) !important;
+  color: #f8fafc !important;
+  border: 1px solid rgba(51, 65, 85, 0.9) !important;
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  padding: 5px 10px !important;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.leaflet-custom-tooltip::before {
+  border-top-color: #0f172a !important;
+}
+
+/* Custom Marker Pulsing & Glow Animations */
+@keyframes marker-pulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0.9;
+  }
+}
+
+.animate-marker-glow {
+  animation: marker-pulse 2s infinite ease-in-out;
+}
+
+
