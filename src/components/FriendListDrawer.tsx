@@ -17,6 +17,7 @@ interface FriendListDrawerProps {
   onClose: () => void;
   trails: UserTrail[];
   currentLocation: GeolocationState;
+  myNickname?: string;
   onSelectUser: (nickname: string) => void;
 }
 
@@ -25,11 +26,21 @@ export const FriendListDrawer: React.FC<FriendListDrawerProps> = ({
   onClose,
   trails,
   currentLocation,
+  myNickname = '',
   onSelectUser,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
   if (!isOpen) return null;
+
+  const currentNickTrimmed = myNickname.trim();
+  const mySelfTrail = trails.find((t) => t.nickname === currentNickTrimmed);
+  const myCurrentReferenceCoords = mySelfTrail?.latestRecord
+    ? {
+        latitude: mySelfTrail.latestRecord.latitude,
+        longitude: mySelfTrail.latestRecord.longitude,
+      }
+    : currentLocation.coords;
 
   const filteredTrails = trails.filter((trail) =>
     trail.nickname.toLowerCase().includes(searchTerm.toLowerCase())
@@ -89,12 +100,12 @@ export const FriendListDrawer: React.FC<FriendListDrawerProps> = ({
               const latest = trail.latestRecord;
               const relative = getRelativeTime(latest.timestamp);
 
-              // Calculate distance if current GPS coords exist
+              // Calculate distance if current reference coords (latest sent location or GPS) exist
               let distText: string | null = null;
-              if (currentLocation.coords) {
+              if (myCurrentReferenceCoords) {
                 const res = calculateDistance(
-                  currentLocation.coords.latitude,
-                  currentLocation.coords.longitude,
+                  myCurrentReferenceCoords.latitude,
+                  myCurrentReferenceCoords.longitude,
                   latest.latitude,
                   latest.longitude
                 );

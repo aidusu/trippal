@@ -678,6 +678,7 @@ export default function App() {
         onClose={() => setIsFriendsOpen(false)}
         trails={userTrails}
         currentLocation={currentLocation}
+        myNickname={nickname}
         onSelectUser={(nick) => {
           setSelectedUser(nick);
           setIsFriendsOpen(false);

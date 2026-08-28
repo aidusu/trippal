@@ -77,17 +77,29 @@ export const SendLocationPanel: React.FC<SendLocationPanelProps> = ({
 
   // Filter out self to compute distance to other friends (limit service to 7 people total)
   const currentNickTrimmed = nickname.trim();
+  const mySelfTrail = trails.find(
+    (t) => t.nickname === currentNickTrimmed || t.uuid === uuid
+  );
+
+  // Use the most up-to-date position from the map/database if sent, or fallback to real-time GPS
+  const myCurrentReferenceCoords = mySelfTrail?.latestRecord
+    ? {
+        latitude: mySelfTrail.latestRecord.latitude,
+        longitude: mySelfTrail.latestRecord.longitude,
+      }
+    : currentLocation.coords;
+
   const otherFriends = trails.filter(
     (t) => t.nickname !== currentNickTrimmed && t.uuid !== uuid
   );
 
-  // Calculate distance from current user's GPS coords to each friend
+  // Calculate distance from current user's latest transmitted/GPS coords to each friend's latest point on the map
   const friendsWithDistance = otherFriends.map((friend) => {
     let distanceInfo: { distance: number; formatted: string } | null = null;
-    if (currentLocation.coords && friend.latestRecord) {
+    if (myCurrentReferenceCoords && friend.latestRecord) {
       distanceInfo = calculateDistance(
-        currentLocation.coords.latitude,
-        currentLocation.coords.longitude,
+        myCurrentReferenceCoords.latitude,
+        myCurrentReferenceCoords.longitude,
         friend.latestRecord.latitude,
         friend.latestRecord.longitude
       );
