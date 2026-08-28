@@ -47,7 +47,7 @@ export const FriendListDrawer: React.FC<FriendListDrawerProps> = ({
             <div>
               <h2 className="font-bold text-base text-slate-100">好友即時位置名單</h2>
               <p className="text-xs text-slate-400">
-                目前共有 {trails.length} 位好友分享位置
+                目前共有 {trails.length} / 7 位好友分享位置 (群組上限 7 人)
               </p>
             </div>
           </div>

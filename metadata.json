@@ -1,6 +1,6 @@
 {
-  "name": "TripPal 即時位置地圖分享",
-  "description": "朋友出遊即時位置分享地圖，支援 Leaflet Free Map、暱稱記錄、最近3筆軌跡連線與點選時間資訊，並可連結 Firebase Realtime Database 與發布至 GitHub Pages。",
+  "name": "TripPal",
+  "description": "TripPal 團體定位分享，支援 Email 帳號登入、自動暱稱帶入、最近3筆軌跡連線與 Leaflet 即時地圖分享。",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,3 +1,10 @@
+export interface AuthUser {
+  uid: string;
+  email: string;
+  nickname: string;
+  sessionId?: string;
+}
+
 export interface LocationRecord {
   id: string;
   uuid: string;

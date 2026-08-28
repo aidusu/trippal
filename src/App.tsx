@@ -10,11 +10,13 @@ import { SendLocationPanel } from './components/SendLocationPanel';
 import { FriendListDrawer } from './components/FriendListDrawer';
 import { SettingsModal } from './components/SettingsModal';
 import { GitHubPagesModal } from './components/GitHubPagesModal';
+import { LoginPage } from './components/LoginPage';
 import {
   LocationRecord,
   UserTrail,
   DatabaseConfig,
   GeolocationState,
+  AuthUser,
 } from './types';
 import {
   getSavedDbConfig,
@@ -23,15 +25,24 @@ import {
   subscribeToLocations,
   getLocalFallbackRecords,
   clearLocalFallbackRecords,
+  getStoredAuthUser,
+  saveStoredAuthUser,
+  updateStoredNickname,
+  signOutUser,
+  subscribeToAuthState,
+  subscribeToUserSession,
 } from './services/firebaseService';
 import { buildUserTrails } from './utils/trails';
 import { getOrCreateUUID, formatDateTime } from './utils/colors';
 import { AlertCircle, CheckCircle, Navigation, Sparkles } from 'lucide-react';
 
 export default function App() {
-  // 1. User Identity States
+  // 1. Auth & User Identity States
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => getStoredAuthUser());
   const [uuid] = useState<string>(() => getOrCreateUUID());
   const [nickname, setNickname] = useState<string>(() => {
+    const storedAuth = getStoredAuthUser();
+    if (storedAuth?.nickname) return storedAuth.nickname;
     return localStorage.getItem('trippal_nickname') || '';
   });
 
@@ -58,6 +69,16 @@ export default function App() {
     text: string;
     type: 'success' | 'error' | 'info';
   } | null>(null);
+  const [kickedOutMessage, setKickedOutMessage] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
+
+  // Refresh current time every 30 seconds so records older than 1 hour dynamically expire
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   // 5. Modals States
   const [isFriendsOpen, setIsFriendsOpen] = useState<boolean>(false);
@@ -77,11 +98,66 @@ export default function App() {
     []
   );
 
-  // Save nickname to localStorage
-  const handleNicknameChange = (name: string) => {
-    setNickname(name);
-    localStorage.setItem('trippal_nickname', name);
+  // Handle successful login
+  const handleLoginSuccess = (user: AuthUser) => {
+    setAuthUser(user);
+    setNickname(user.nickname);
+    setKickedOutMessage(null);
+    showToast(`歡迎回來，${user.nickname}！`, 'success');
   };
+
+  // Handle Logout
+  const handleLogout = async () => {
+    await signOutUser();
+    setAuthUser(null);
+    setKickedOutMessage(null);
+    showToast('已安全登出', 'info');
+  };
+
+  // Enforce single-session: kick out this device if another device logs into the same account
+  useEffect(() => {
+    if (!authUser?.email || !authUser?.sessionId) return;
+
+    const unsub = subscribeToUserSession(
+      authUser.email,
+      authUser.sessionId,
+      () => {
+        signOutUser();
+        setAuthUser(null);
+        setKickedOutMessage('此帳號已在其他裝置登入，系統已將您登出。');
+      },
+      dbConfig
+    );
+
+    return () => unsub();
+  }, [authUser?.email, authUser?.sessionId, dbConfig]);
+
+  // Save nickname to localStorage & update profile
+  const handleNicknameChange = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setNickname(trimmed);
+    updateStoredNickname(trimmed);
+    if (authUser) {
+      localStorage.setItem(`trippal_nick_${authUser.uid}`, trimmed);
+      setAuthUser((prev) => (prev ? { ...prev, nickname: trimmed } : null));
+    }
+    showToast(`暱稱已更新為「${trimmed}」`, 'success');
+  };
+
+  // Subscribe to Auth state changes on mount
+  useEffect(() => {
+    const unsub = subscribeToAuthState((user) => {
+      if (user) {
+        setAuthUser(user);
+        if (!nickname) {
+          setNickname(user.nickname);
+        }
+      }
+    }, dbConfig);
+
+    return () => unsub();
+  }, [dbConfig]);
 
   // Obtain GPS Location (HTML5 Geolocation API)
   const refreshLocation = useCallback(() => {
@@ -137,6 +213,8 @@ export default function App() {
 
   // Continuous Geolocation Watch
   useEffect(() => {
+    if (!authUser) return;
+
     refreshLocation();
 
     if (!navigator.geolocation) return;
@@ -169,10 +247,12 @@ export default function App() {
     return () => {
       navigator.geolocation.clearWatch(watchId);
     };
-  }, [refreshLocation]);
+  }, [refreshLocation, authUser]);
 
   // Subscribe to Firebase Realtime Database
   useEffect(() => {
+    if (!authUser) return;
+
     const unsubscribe = subscribeToLocations(
       (records, realtime) => {
         setRawRecords(records);
@@ -189,14 +269,11 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, [dbConfig]);
+  }, [dbConfig, authUser]);
 
   // Handle Send Location to Firebase
   const handleSendLocation = async () => {
-    if (!nickname.trim()) {
-      showToast('請先輸入「暱稱」！', 'error');
-      return;
-    }
+    const currentNick = nickname.trim() || (authUser?.nickname || '我的暱稱');
 
     // If no coordinates yet, try to obtain them first
     let lat = currentLocation.coords?.latitude;
@@ -244,8 +321,8 @@ export default function App() {
 
     const record: LocationRecord = {
       id: `loc_${now}_${Math.random().toString(36).substring(2, 7)}`,
-      uuid,
-      nickname: nickname.trim(),
+      uuid: authUser?.uid || uuid,
+      nickname: currentNick,
       timestamp: now,
       formattedTime: formatted,
       latitude: lat!,
@@ -260,7 +337,7 @@ export default function App() {
 
     if (res.success) {
       setLastSentTime(now);
-      showToast(`已成功傳送位置！(${nickname})`, 'success');
+      showToast(`已成功傳送位置！(${currentNick})`, 'success');
 
       // Optimistically insert to local view if not already included
       setRawRecords((prev) => {
@@ -279,7 +356,7 @@ export default function App() {
       autoSendTimerRef.current = null;
     }
 
-    if (autoSendInterval > 0 && nickname.trim()) {
+    if (autoSendInterval > 0 && nickname.trim() && authUser) {
       autoSendTimerRef.current = window.setInterval(() => {
         handleSendLocation();
       }, autoSendInterval * 1000);
@@ -291,7 +368,7 @@ export default function App() {
         autoSendTimerRef.current = null;
       }
     };
-  }, [autoSendInterval, nickname, currentLocation.coords, uuid, dbConfig]);
+  }, [autoSendInterval, nickname, currentLocation.coords, uuid, dbConfig, authUser]);
 
   // Generate Demo Friends (Alice & Bob, each with 3 sequential locations)
   const handleAddDemoFriends = () => {
@@ -398,16 +475,31 @@ export default function App() {
     showToast('Firebase 資料庫設定已更新！', 'success');
   };
 
-  // Convert raw records into grouped trails (Last 3 per nickname, polyline connected)
-  const userTrails: UserTrail[] = buildUserTrails(rawRecords);
+  // Convert raw records into grouped trails (Last 3 per nickname within the last 1 hour, polyline connected)
+  const userTrails: UserTrail[] = buildUserTrails(rawRecords, currentTime);
+
+  // If user is not logged in, render the Login Page
+  if (!authUser) {
+    return (
+      <LoginPage
+        onLoginSuccess={handleLoginSuccess}
+        dbConfig={dbConfig}
+        kickedOutMessage={kickedOutMessage}
+      />
+    );
+  }
 
   return (
-    <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 select-none">
-      {/* Top App Header */}
+    <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 select-none font-sans">
+      {/* Top App Header with TripPal branding, Account email, and Editable nickname */}
       <Header
         onlineCount={userTrails.length}
         isRealtime={isRealtime}
         dbConnected={dbConnected}
+        authUser={authUser}
+        nickname={nickname}
+        onNicknameChange={handleNicknameChange}
+        onLogout={handleLogout}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenFriends={() => setIsFriendsOpen(true)}
         onOpenGithubGuide={() => setIsGithubModalOpen(true)}
@@ -443,11 +535,11 @@ export default function App() {
         />
       </main>
 
-      {/* Bottom Send Location & Nickname Panel */}
+      {/* Bottom Send Location & Nickname Panel with Friend Distances */}
       <SendLocationPanel
         nickname={nickname}
         onNicknameChange={handleNicknameChange}
-        uuid={uuid}
+        uuid={authUser.uid || uuid}
         currentLocation={currentLocation}
         onSendLocation={handleSendLocation}
         isSending={isSending}
@@ -455,6 +547,10 @@ export default function App() {
         autoSendInterval={autoSendInterval}
         onAutoSendIntervalChange={(sec) => setAutoSendInterval(sec)}
         onRefreshLocation={refreshLocation}
+        trails={userTrails}
+        onSelectUser={(nick) => setSelectedUser(nick)}
+        selectedUserId={selectedUser}
+        onAddDemoFriends={handleAddDemoFriends}
       />
 
       {/* Floating Toast Alerts */}

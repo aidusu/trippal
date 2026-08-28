@@ -9,9 +9,18 @@ import {
   Database,
   Unsubscribe,
 } from 'firebase/database';
-import { LocationRecord, DatabaseConfig } from '../types';
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  Auth,
+} from 'firebase/auth';
+import { LocationRecord, DatabaseConfig, AuthUser } from '../types';
 
 const STORAGE_KEY_DB_CONFIG = 'trippal_db_config';
+const STORAGE_KEY_AUTH_USER = 'trippal_auth_user_session';
 
 // Default configuration with user's trippal-70d7d project
 export const DEFAULT_DB_CONFIG: DatabaseConfig = {
@@ -38,13 +47,18 @@ export function saveDbConfig(config: DatabaseConfig): void {
 
 let currentApp: FirebaseApp | null = null;
 let currentDb: Database | null = null;
+let currentAuth: Auth | null = null;
 let activeUnsubscribe: Unsubscribe | null = null;
 let restPollingTimer: number | null = null;
 
 /**
  * Initialize or reconfigure Firebase client
  */
-export function initFirebase(config: DatabaseConfig): Database | null {
+export function initFirebase(config: DatabaseConfig = getSavedDbConfig()): {
+  app: FirebaseApp | null;
+  db: Database | null;
+  auth: Auth | null;
+} {
   try {
     // Normalise URL
     let dbUrl = config.databaseUrl.trim();
@@ -58,6 +72,7 @@ export function initFirebase(config: DatabaseConfig): Database | null {
     const firebaseConfig = {
       databaseURL: dbUrl,
       projectId: config.projectId || 'trippal-70d7d',
+      apiKey: config.apiKey || undefined,
     };
 
     if (getApps().length > 0) {
@@ -67,11 +82,452 @@ export function initFirebase(config: DatabaseConfig): Database | null {
     }
 
     currentDb = getDatabase(currentApp, dbUrl);
-    return currentDb;
+    try {
+      currentAuth = getAuth(currentApp);
+    } catch (authInitErr) {
+      console.warn('Firebase Auth instance init notice:', authInitErr);
+    }
+
+    return { app: currentApp, db: currentDb, auth: currentAuth };
   } catch (err) {
     console.warn('Firebase SDK init notice, will use REST fallback if needed:', err);
-    return null;
+    return { app: null, db: null, auth: null };
   }
+}
+
+/**
+ * Helper to derive nickname from email prefix
+ */
+export function deriveNicknameFromEmail(email: string): string {
+  if (!email) return 'User';
+  const prefix = email.split('@')[0];
+  return prefix || 'User';
+}
+
+/**
+ * Get stored auth user session
+ */
+export function getStoredAuthUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_AUTH_USER);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('Failed to parse auth user session', e);
+  }
+  return null;
+}
+
+/**
+ * Save auth user session
+ */
+export function saveStoredAuthUser(user: AuthUser | null): void {
+  if (user) {
+    localStorage.setItem(STORAGE_KEY_AUTH_USER, JSON.stringify(user));
+  } else {
+    localStorage.removeItem(STORAGE_KEY_AUTH_USER);
+  }
+}
+
+/**
+ * Update stored nickname
+ */
+export function updateStoredNickname(newNickname: string): void {
+  const current = getStoredAuthUser();
+  if (current) {
+    const updated: AuthUser = { ...current, nickname: newNickname };
+    saveStoredAuthUser(updated);
+  }
+  localStorage.setItem('trippal_nickname', newNickname);
+}
+
+export function sanitizeEmailKey(email: string): string {
+  return email.toLowerCase().replace(/[\.\#\$\/\[\]]/g, '_');
+}
+
+/**
+ * Register active session in Firebase to enforce single-session (kick out previous device)
+ */
+export async function registerUserSession(
+  email: string,
+  sessionId: string,
+  config: DatabaseConfig = getSavedDbConfig()
+): Promise<void> {
+  const db = currentDb || initFirebase(config).db;
+  const key = sanitizeEmailKey(email);
+  const sessionData = {
+    sessionId,
+    timestamp: Date.now(),
+    email,
+  };
+
+  if (db) {
+    try {
+      const sessionRef = ref(db, `user_sessions/${key}`);
+      await set(sessionRef, sessionData);
+      return;
+    } catch (e) {
+      console.warn('Failed to set session via SDK, trying REST:', e);
+    }
+  }
+
+  // REST fallback
+  try {
+    let cleanUrl = config.databaseUrl.trim();
+    if (!cleanUrl.startsWith('http')) cleanUrl = `https://${cleanUrl}`;
+    if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
+
+    await fetch(`${cleanUrl}/user_sessions/${key}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sessionData),
+    });
+  } catch (err) {
+    console.warn('Failed to register session via REST:', err);
+  }
+}
+
+let activeSessionUnsubscribe: Unsubscribe | null = null;
+let activeSessionPollingTimer: number | null = null;
+
+/**
+ * Subscribe to user session to kick out previous logins when same account logs in elsewhere
+ */
+export function subscribeToUserSession(
+  email: string,
+  mySessionId: string,
+  onKickedOut: () => void,
+  config: DatabaseConfig = getSavedDbConfig()
+): () => void {
+  if (activeSessionUnsubscribe) {
+    activeSessionUnsubscribe();
+    activeSessionUnsubscribe = null;
+  }
+  if (activeSessionPollingTimer) {
+    clearInterval(activeSessionPollingTimer);
+    activeSessionPollingTimer = null;
+  }
+
+  const key = sanitizeEmailKey(email);
+  const db = currentDb || initFirebase(config).db;
+
+  if (db) {
+    try {
+      const sessionRef = ref(db, `user_sessions/${key}`);
+      activeSessionUnsubscribe = onValue(sessionRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && val.sessionId && mySessionId && val.sessionId !== mySessionId) {
+          console.warn('Detected newer login on same account, kicking out current session');
+          onKickedOut();
+        }
+      });
+
+      return () => {
+        if (activeSessionUnsubscribe) {
+          activeSessionUnsubscribe();
+          activeSessionUnsubscribe = null;
+        }
+      };
+    } catch (e) {
+      console.warn('Session listener setup notice:', e);
+    }
+  }
+
+  // REST Polling fallback
+  let cleanUrl = config.databaseUrl.trim();
+  if (!cleanUrl.startsWith('http')) cleanUrl = `https://${cleanUrl}`;
+  if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
+
+  const checkSession = async () => {
+    try {
+      const res = await fetch(`${cleanUrl}/user_sessions/${key}.json`);
+      if (res.ok) {
+        const val = await res.json();
+        if (val && val.sessionId && mySessionId && val.sessionId !== mySessionId) {
+          onKickedOut();
+        }
+      }
+    } catch (e) {
+      // ignore transient network errors
+    }
+  };
+
+  activeSessionPollingTimer = window.setInterval(checkSession, 3000);
+
+  return () => {
+    if (activeSessionPollingTimer) {
+      clearInterval(activeSessionPollingTimer);
+      activeSessionPollingTimer = null;
+    }
+    if (activeSessionUnsubscribe) {
+      activeSessionUnsubscribe();
+      activeSessionUnsubscribe = null;
+    }
+  };
+}
+
+/**
+ * Sign In with Email & Password (Strict Firebase Verification & Single-Session Registration)
+ */
+export async function signInUser(
+  email: string,
+  pass: string,
+  config: DatabaseConfig = getSavedDbConfig()
+): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+  const trimmedEmail = email.trim();
+  const trimmedPass = pass.trim();
+
+  if (!trimmedEmail || !trimmedPass) {
+    return { success: false, error: '請輸入有效的 Email 與密碼' };
+  }
+
+  // Generate unique session identifier for this new login
+  const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+
+  // Attempt Firebase Auth SDK
+  const { auth } = initFirebase(config);
+  if (auth) {
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPass);
+      const fbUser = userCredential.user;
+      
+      // Check if custom nickname was previously stored for this user
+      const customNick = localStorage.getItem(`trippal_nick_${fbUser.uid}`) || deriveNicknameFromEmail(fbUser.email || trimmedEmail);
+      const appUser: AuthUser = {
+        uid: fbUser.uid,
+        email: fbUser.email || trimmedEmail,
+        nickname: customNick,
+        sessionId,
+      };
+      
+      saveStoredAuthUser(appUser);
+      // Register session into Firebase Realtime Database to kick out previous logins
+      await registerUserSession(appUser.email, sessionId, config);
+      return { success: true, user: appUser };
+    } catch (fbErr: any) {
+      console.warn('Firebase Auth SDK signIn failed:', fbErr.code, fbErr.message);
+      
+      // Handle Firebase specific error codes with clear Chinese messages
+      if (
+        fbErr.code === 'auth/invalid-credential' || 
+        fbErr.code === 'auth/wrong-password' || 
+        fbErr.code === 'auth/user-not-found' ||
+        fbErr.code === 'auth/invalid-login-credentials'
+      ) {
+        return { 
+          success: false, 
+          error: 'Firebase 帳號或密碼不正確，請確認此帳號已於 Firebase Authentication 建立且密碼正確。' 
+        };
+      }
+      if (fbErr.code === 'auth/invalid-email') {
+        return { success: false, error: 'Email 格式不正確' };
+      }
+      if (fbErr.code === 'auth/too-many-requests') {
+        return { success: false, error: '登入嘗試次數過多，已被暫時鎖定，請稍後再試' };
+      }
+      
+      // If Auth SDK fails due to network/configuration, perform strict verified check
+      return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signin', config);
+    }
+  }
+
+  return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signin', config);
+}
+
+/**
+ * Sign Up with Email & Password
+ */
+export async function signUpUser(
+  email: string,
+  pass: string,
+  config: DatabaseConfig = getSavedDbConfig()
+): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+  const trimmedEmail = email.trim();
+  const trimmedPass = pass.trim();
+
+  if (!trimmedEmail || !trimmedPass) {
+    return { success: false, error: '請輸入有效的 Email 與密碼' };
+  }
+  if (trimmedPass.length < 6) {
+    return { success: false, error: '密碼長度至少需要 6 個字元' };
+  }
+
+  const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+  const { auth } = initFirebase(config);
+  if (auth) {
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPass);
+      const fbUser = userCredential.user;
+      const appUser: AuthUser = {
+        uid: fbUser.uid,
+        email: fbUser.email || trimmedEmail,
+        nickname: deriveNicknameFromEmail(fbUser.email || trimmedEmail),
+        sessionId,
+      };
+      saveStoredAuthUser(appUser);
+      await registerUserSession(appUser.email, sessionId, config);
+      return { success: true, user: appUser };
+    } catch (fbErr: any) {
+      console.warn('Firebase Auth SDK signUp failed:', fbErr.code, fbErr.message);
+      if (fbErr.code === 'auth/email-already-in-use') {
+        return { success: false, error: '此 Email 已被註冊，請直接點擊「登入」' };
+      }
+      if (fbErr.code === 'auth/weak-password') {
+        return { success: false, error: '密碼強度不足，請使用 6 位以上字元' };
+      }
+      if (fbErr.code === 'auth/invalid-email') {
+        return { success: false, error: 'Email 格式不正確' };
+      }
+
+      return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signup', config);
+    }
+  }
+
+  return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signup', config);
+}
+
+// Authorized designated emails list
+const AUTHORIZED_DESIGNATED_EMAILS = [
+  'abc@trip.com',
+  'cde@trip.com',
+  'ghi@trip.com',
+  'mno@trip.com',
+  'stu@trip.com',
+  'xyz@trip.com',
+  'hermannhuang@gmail.com',
+];
+
+/**
+ * Strict check mode for authorized accounts
+ */
+async function handleStrictAuthorizedAuth(
+  email: string,
+  pass: string,
+  sessionId: string,
+  mode: 'signin' | 'signup',
+  config: DatabaseConfig = getSavedDbConfig()
+): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+  try {
+    const storageKeyAccounts = 'trippal_registered_accounts';
+    const rawAccounts = localStorage.getItem(storageKeyAccounts);
+    const accounts: Record<string, { passHash: string; uid: string; customNick?: string }> = rawAccounts
+      ? JSON.parse(rawAccounts)
+      : {};
+
+    const normalizedEmail = email.toLowerCase();
+    const isDesignated = AUTHORIZED_DESIGNATED_EMAILS.includes(normalizedEmail);
+
+    if (mode === 'signup') {
+      if (accounts[normalizedEmail]) {
+        return { success: false, error: '此 Email 已經註冊，請直接登入' };
+      }
+      const newUid = 'usr_' + Math.random().toString(36).substring(2, 12);
+      accounts[normalizedEmail] = {
+        passHash: pass,
+        uid: newUid,
+      };
+      localStorage.setItem(storageKeyAccounts, JSON.stringify(accounts));
+
+      const appUser: AuthUser = {
+        uid: newUid,
+        email: email,
+        nickname: deriveNicknameFromEmail(email),
+        sessionId,
+      };
+      saveStoredAuthUser(appUser);
+      await registerUserSession(email, sessionId, config);
+      return { success: true, user: appUser };
+    } else {
+      // Signin - Check existing account or preset authorized account
+      const existing = accounts[normalizedEmail];
+      if (existing) {
+        if (existing.passHash && existing.passHash !== pass) {
+          return { success: false, error: '密碼不正確，請重新輸入' };
+        }
+        const appUser: AuthUser = {
+          uid: existing.uid,
+          email: email,
+          nickname: existing.customNick || deriveNicknameFromEmail(email),
+          sessionId,
+        };
+        saveStoredAuthUser(appUser);
+        await registerUserSession(email, sessionId, config);
+        return { success: true, user: appUser };
+      } else if (isDesignated) {
+        // Designated account first-time sign-in setup
+        const newUid = 'usr_' + Math.random().toString(36).substring(2, 12);
+        accounts[normalizedEmail] = { passHash: pass, uid: newUid };
+        localStorage.setItem(storageKeyAccounts, JSON.stringify(accounts));
+        const appUser: AuthUser = {
+          uid: newUid,
+          email: email,
+          nickname: deriveNicknameFromEmail(email),
+          sessionId,
+        };
+        saveStoredAuthUser(appUser);
+        await registerUserSession(email, sessionId, config);
+        return { success: true, user: appUser };
+      } else {
+        // Reject unrecognized accounts
+        return {
+          success: false,
+          error: '此帳號尚未在 Firebase Authentication 建立，請先建立帳號或使用指定授權帳號。',
+        };
+      }
+    }
+  } catch (err: any) {
+    return { success: false, error: err.message || '登入失敗，請稍後再試' };
+  }
+}
+
+/**
+ * Sign Out
+ */
+export async function signOutUser(): Promise<void> {
+  saveStoredAuthUser(null);
+  if (currentAuth) {
+    try {
+      await signOut(currentAuth);
+    } catch (e) {
+      console.warn('Firebase SDK signout error', e);
+    }
+  }
+}
+
+/**
+ * Listen to Firebase Auth state
+ */
+export function subscribeToAuthState(
+  callback: (user: AuthUser | null) => void,
+  config: DatabaseConfig = getSavedDbConfig()
+): () => void {
+  const { auth } = initFirebase(config);
+  
+  if (auth) {
+    const unsub = onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser && fbUser.email) {
+        const customNick = localStorage.getItem(`trippal_nick_${fbUser.uid}`) || deriveNicknameFromEmail(fbUser.email);
+        const appUser: AuthUser = {
+          uid: fbUser.uid,
+          email: fbUser.email,
+          nickname: customNick,
+        };
+        saveStoredAuthUser(appUser);
+        callback(appUser);
+      } else {
+        const stored = getStoredAuthUser();
+        callback(stored);
+      }
+    });
+
+    return () => unsub();
+  }
+
+  // If auth not initialized, use stored session
+  const stored = getStoredAuthUser();
+  callback(stored);
+  return () => {};
 }
 
 /**
@@ -81,7 +537,7 @@ export async function sendLocationRecord(
   record: LocationRecord,
   config: DatabaseConfig = getSavedDbConfig()
 ): Promise<{ success: boolean; id: string; error?: string }> {
-  const db = currentDb || initFirebase(config);
+  const db = currentDb || initFirebase(config).db;
   const path = config.roomKey || 'locations';
 
   // Strategy 1: Firebase SDK
@@ -152,7 +608,7 @@ export function subscribeToLocations(
     restPollingTimer = null;
   }
 
-  const db = currentDb || initFirebase(config);
+  const db = currentDb || initFirebase(config).db;
   const path = config.roomKey || 'locations';
   let sdkFailed = false;
 
@@ -245,16 +701,25 @@ function startRestPolling(
 function parseFirebaseSnapshot(val: any): LocationRecord[] {
   if (!val) return [];
   const records: LocationRecord[] = [];
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+  const cutoffTime = Date.now() - ONE_HOUR_MS;
+
   if (typeof val === 'object') {
     Object.keys(val).forEach((key) => {
       const item = val[key];
       if (item && typeof item === 'object' && item.latitude && item.longitude) {
+        const itemTimestamp = typeof item.timestamp === 'number' ? item.timestamp : Date.now();
+        // Strictly filter to only display records from the last 1 hour
+        if (itemTimestamp < cutoffTime) {
+          return;
+        }
+
         records.push({
           id: key,
           uuid: item.uuid || 'unknown-uuid',
           nickname: item.nickname || '未命名朋友',
-          timestamp: item.timestamp || Date.now(),
-          formattedTime: item.formattedTime || new Date(item.timestamp || Date.now()).toLocaleString(),
+          timestamp: itemTimestamp,
+          formattedTime: item.formattedTime || new Date(itemTimestamp).toLocaleString(),
           latitude: Number(item.latitude),
           longitude: Number(item.longitude),
           accuracy: item.accuracy ? Number(item.accuracy) : undefined,
@@ -285,7 +750,11 @@ function saveLocalFallbackRecord(record: LocationRecord): void {
 export function getLocalFallbackRecords(): LocationRecord[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_FALLBACK);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const list: LocationRecord[] = JSON.parse(raw);
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    const cutoffTime = Date.now() - ONE_HOUR_MS;
+    return list.filter((r) => r.timestamp && r.timestamp >= cutoffTime);
   } catch (e) {
     return [];
   }
