@@ -285,14 +285,13 @@ export async function signInUser(
   // Generate unique session identifier for this new login
   const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
-  // Attempt Firebase Auth SDK
-  const { auth } = initFirebase(config);
-  if (auth) {
+  // 1. Try Firebase Auth SDK if available
+  const { auth, db } = initFirebase(config);
+  if (auth && config.apiKey) {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPass);
       const fbUser = userCredential.user;
       
-      // Check if custom nickname was previously stored for this user
       const customNick = localStorage.getItem(`trippal_nick_${fbUser.uid}`) || deriveNicknameFromEmail(fbUser.email || trimmedEmail);
       const appUser: AuthUser = {
         uid: fbUser.uid,
@@ -302,13 +301,11 @@ export async function signInUser(
       };
       
       saveStoredAuthUser(appUser);
-      // Register session into Firebase Realtime Database to kick out previous logins
       await registerUserSession(appUser.email, sessionId, config);
       return { success: true, user: appUser };
     } catch (fbErr: any) {
       console.warn('Firebase Auth SDK signIn failed:', fbErr.code, fbErr.message);
       
-      // Handle Firebase specific error codes with clear Chinese messages
       if (
         fbErr.code === 'auth/invalid-credential' || 
         fbErr.code === 'auth/wrong-password' || 
@@ -317,7 +314,7 @@ export async function signInUser(
       ) {
         return { 
           success: false, 
-          error: 'Firebase 帳號或密碼不正確，請確認此帳號已於 Firebase Authentication 建立且密碼正確。' 
+          error: 'Firebase 帳號或密碼不正確。若您尚未建立帳號，請切換至「註冊帳號」先完成建立。' 
         };
       }
       if (fbErr.code === 'auth/invalid-email') {
@@ -326,17 +323,64 @@ export async function signInUser(
       if (fbErr.code === 'auth/too-many-requests') {
         return { success: false, error: '登入嘗試次數過多，已被暫時鎖定，請稍後再試' };
       }
-      
-      // If Auth SDK fails due to network/configuration, perform strict verified check
-      return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signin', config);
+      return {
+        success: false,
+        error: `Firebase 認證失敗 (${fbErr.code || fbErr.message || '請確認帳號與密碼'})`,
+      };
     }
   }
 
-  return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signin', config);
+  // 2. Strict Realtime Database user registry authentication
+  // Checks `users/{emailKey}` in Firebase Realtime Database
+  try {
+    const key = sanitizeEmailKey(trimmedEmail);
+    let cleanUrl = config.databaseUrl.trim();
+    if (!cleanUrl.startsWith('http')) cleanUrl = `https://${cleanUrl}`;
+    if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
+
+    const res = await fetch(`${cleanUrl}/users/${key}.json`);
+    if (res.ok) {
+      const userData = await res.json();
+      if (!userData) {
+        return {
+          success: false,
+          error: '此帳號尚未在 Firebase 建立！請先切換至「註冊帳號」建立此 Email 與密碼。',
+        };
+      }
+
+      if (userData.password !== trimmedPass) {
+        return {
+          success: false,
+          error: '密碼不正確，請重新輸入！',
+        };
+      }
+
+      const appUser: AuthUser = {
+        uid: userData.uid || ('usr_' + key),
+        email: trimmedEmail,
+        nickname: userData.nickname || deriveNicknameFromEmail(trimmedEmail),
+        sessionId,
+      };
+
+      saveStoredAuthUser(appUser);
+      await registerUserSession(trimmedEmail, sessionId, config);
+      return { success: true, user: appUser };
+    } else {
+      return {
+        success: false,
+        error: '無法連線至 Firebase 即時資料庫進行認證，請檢查網路或資料庫網址。',
+      };
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      error: 'Firebase 認證連線失敗：' + (err.message || '請檢查網路連線'),
+    };
+  }
 }
 
 /**
- * Sign Up with Email & Password
+ * Sign Up with Email & Password (Strict registration in Firebase RTDB / Auth)
  */
 export async function signUpUser(
   email: string,
@@ -355,7 +399,8 @@ export async function signUpUser(
 
   const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
   const { auth } = initFirebase(config);
-  if (auth) {
+
+  if (auth && config.apiKey) {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPass);
       const fbUser = userCredential.user;
@@ -371,7 +416,7 @@ export async function signUpUser(
     } catch (fbErr: any) {
       console.warn('Firebase Auth SDK signUp failed:', fbErr.code, fbErr.message);
       if (fbErr.code === 'auth/email-already-in-use') {
-        return { success: false, error: '此 Email 已被註冊，請直接點擊「登入」' };
+        return { success: false, error: '此 Email 已被註冊，請直接點擊「登入帳號」' };
       }
       if (fbErr.code === 'auth/weak-password') {
         return { success: false, error: '密碼強度不足，請使用 6 位以上字元' };
@@ -379,105 +424,65 @@ export async function signUpUser(
       if (fbErr.code === 'auth/invalid-email') {
         return { success: false, error: 'Email 格式不正確' };
       }
-
-      return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signup', config);
     }
   }
 
-  return handleStrictAuthorizedAuth(trimmedEmail, trimmedPass, sessionId, 'signup', config);
-}
-
-// Authorized designated emails list
-const AUTHORIZED_DESIGNATED_EMAILS = [
-  'abc@trip.com',
-  'cde@trip.com',
-  'ghi@trip.com',
-  'mno@trip.com',
-  'stu@trip.com',
-  'xyz@trip.com',
-  'hermannhuang@gmail.com',
-];
-
-/**
- * Strict check mode for authorized accounts
- */
-async function handleStrictAuthorizedAuth(
-  email: string,
-  pass: string,
-  sessionId: string,
-  mode: 'signin' | 'signup',
-  config: DatabaseConfig = getSavedDbConfig()
-): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+  // Register in Firebase Realtime Database
   try {
-    const storageKeyAccounts = 'trippal_registered_accounts';
-    const rawAccounts = localStorage.getItem(storageKeyAccounts);
-    const accounts: Record<string, { passHash: string; uid: string; customNick?: string }> = rawAccounts
-      ? JSON.parse(rawAccounts)
-      : {};
+    const key = sanitizeEmailKey(trimmedEmail);
+    let cleanUrl = config.databaseUrl.trim();
+    if (!cleanUrl.startsWith('http')) cleanUrl = `https://${cleanUrl}`;
+    if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
 
-    const normalizedEmail = email.toLowerCase();
-    const isDesignated = AUTHORIZED_DESIGNATED_EMAILS.includes(normalizedEmail);
-
-    if (mode === 'signup') {
-      if (accounts[normalizedEmail]) {
-        return { success: false, error: '此 Email 已經註冊，請直接登入' };
-      }
-      const newUid = 'usr_' + Math.random().toString(36).substring(2, 12);
-      accounts[normalizedEmail] = {
-        passHash: pass,
-        uid: newUid,
-      };
-      localStorage.setItem(storageKeyAccounts, JSON.stringify(accounts));
-
-      const appUser: AuthUser = {
-        uid: newUid,
-        email: email,
-        nickname: deriveNicknameFromEmail(email),
-        sessionId,
-      };
-      saveStoredAuthUser(appUser);
-      await registerUserSession(email, sessionId, config);
-      return { success: true, user: appUser };
-    } else {
-      // Signin - Check existing account or preset authorized account
-      const existing = accounts[normalizedEmail];
+    // Check if user already exists
+    const checkRes = await fetch(`${cleanUrl}/users/${key}.json`);
+    if (checkRes.ok) {
+      const existing = await checkRes.json();
       if (existing) {
-        if (existing.passHash && existing.passHash !== pass) {
-          return { success: false, error: '密碼不正確，請重新輸入' };
-        }
-        const appUser: AuthUser = {
-          uid: existing.uid,
-          email: email,
-          nickname: existing.customNick || deriveNicknameFromEmail(email),
-          sessionId,
-        };
-        saveStoredAuthUser(appUser);
-        await registerUserSession(email, sessionId, config);
-        return { success: true, user: appUser };
-      } else if (isDesignated) {
-        // Designated account first-time sign-in setup
-        const newUid = 'usr_' + Math.random().toString(36).substring(2, 12);
-        accounts[normalizedEmail] = { passHash: pass, uid: newUid };
-        localStorage.setItem(storageKeyAccounts, JSON.stringify(accounts));
-        const appUser: AuthUser = {
-          uid: newUid,
-          email: email,
-          nickname: deriveNicknameFromEmail(email),
-          sessionId,
-        };
-        saveStoredAuthUser(appUser);
-        await registerUserSession(email, sessionId, config);
-        return { success: true, user: appUser };
-      } else {
-        // Reject unrecognized accounts
         return {
           success: false,
-          error: '此帳號尚未在 Firebase Authentication 建立，請先建立帳號或使用指定授權帳號。',
+          error: '此 Email 已在 Firebase 註冊，請切換至「登入帳號」並輸入密碼。',
         };
       }
     }
+
+    const uid = 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+    const newUserData = {
+      uid,
+      email: trimmedEmail,
+      nickname: deriveNicknameFromEmail(trimmedEmail),
+      password: trimmedPass,
+      createdAt: Date.now(),
+    };
+
+    const putRes = await fetch(`${cleanUrl}/users/${key}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newUserData),
+    });
+
+    if (!putRes.ok) {
+      return {
+        success: false,
+        error: '建立帳號失敗，請確認 Firebase 即時資料庫 Rules 是否允許寫入。',
+      };
+    }
+
+    const appUser: AuthUser = {
+      uid,
+      email: trimmedEmail,
+      nickname: newUserData.nickname,
+      sessionId,
+    };
+
+    saveStoredAuthUser(appUser);
+    await registerUserSession(trimmedEmail, sessionId, config);
+    return { success: true, user: appUser };
   } catch (err: any) {
-    return { success: false, error: err.message || '登入失敗，請稍後再試' };
+    return {
+      success: false,
+      error: '註冊帳號時發生錯誤：' + (err.message || '請稍後再試'),
+    };
   }
 }
 

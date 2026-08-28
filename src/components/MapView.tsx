@@ -20,6 +20,7 @@ interface MapViewProps {
   currentLocation: GeolocationState;
   myNickname: string;
   selectedUserId?: string | null;
+  centerCoords?: { latitude: number; longitude: number; trigger?: number } | null;
   onSelectUser?: (nickname: string) => void;
   onLocateMeRequest?: () => void;
 }
@@ -29,7 +30,7 @@ const TILE_PROVIDERS: Record<
   { name: string; url: string; maxZoom: number; attribution: string; subdomains?: string }
 > = {
   osm: {
-    name: 'OpenStreetMap (標準免費)',
+    name: 'OpenStreetMap (標準地圖)',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -67,6 +68,7 @@ export const MapView: React.FC<MapViewProps> = ({
   currentLocation,
   myNickname,
   selectedUserId,
+  centerCoords,
   onSelectUser,
   onLocateMeRequest,
 }) => {
@@ -75,22 +77,23 @@ export const MapView: React.FC<MapViewProps> = ({
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const trailLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const userLocationLayerGroupRef = useRef<L.LayerGroup | null>(null);
+  const hasAutoCenteredInitialRef = useRef<boolean>(false);
 
   const [tileProvider, setTileProvider] = useState<MapTileProvider>('osm');
   const [showLayerMenu, setShowLayerMenu] = useState<boolean>(false);
   const [autoFollow, setAutoFollow] = useState<boolean>(false);
-  const [isMapReady, setIsMapReady] = useState<boolean>(false);
 
   // Initialize Leaflet Map
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-    // Default center to Taiwan or world center
-    const defaultCenter: [number, number] = [25.033, 121.5654];
-    const defaultZoom = 13;
+    // Initial center: if real GPS exists use it, otherwise default to Taiwan center
+    const initialLat = currentLocation.coords?.latitude || 25.033;
+    const initialLng = currentLocation.coords?.longitude || 121.5654;
+    const defaultZoom = currentLocation.coords ? 15 : 13;
 
     const map = L.map(mapContainerRef.current, {
-      center: defaultCenter,
+      center: [initialLat, initialLng],
       zoom: defaultZoom,
       zoomControl: false,
       attributionControl: true,
@@ -120,13 +123,32 @@ export const MapView: React.FC<MapViewProps> = ({
     trailLayerGroupRef.current = trailGroup;
     userLocationLayerGroupRef.current = userGroup;
     mapInstanceRef.current = map;
-    setIsMapReady(true);
 
     return () => {
       map.remove();
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Center immediately when centerCoords is provided (e.g. location sent)
+  useEffect(() => {
+    if (!mapInstanceRef.current || !centerCoords) return;
+    mapInstanceRef.current.flyTo([centerCoords.latitude, centerCoords.longitude], 16, {
+      animate: true,
+      duration: 1.2,
+    });
+  }, [centerCoords]);
+
+  // Initial automatic centering when user's GPS coords first become available
+  useEffect(() => {
+    if (!mapInstanceRef.current || !currentLocation.coords || hasAutoCenteredInitialRef.current) return;
+    hasAutoCenteredInitialRef.current = true;
+    mapInstanceRef.current.flyTo(
+      [currentLocation.coords.latitude, currentLocation.coords.longitude],
+      15,
+      { animate: true, duration: 1 }
+    );
+  }, [currentLocation.coords]);
 
   // Update tile provider when changed
   useEffect(() => {
@@ -159,27 +181,27 @@ export const MapView: React.FC<MapViewProps> = ({
     if (accuracy && accuracy < 5000) {
       const circle = L.circle([latitude, longitude], {
         radius: accuracy,
-        color: '#3b82f6',
-        fillColor: '#60a5fa',
-        fillOpacity: 0.12,
+        color: '#10b981',
+        fillColor: '#34d399',
+        fillOpacity: 0.15,
         weight: 1.5,
         dashArray: '4, 6',
       });
       userGroup.addLayer(circle);
     }
 
-    // My Location Pulsing Marker (Accurately Centered, clean & compact)
+    // My Location Pulsing Marker (Compact and elegant)
     const myLocationIcon = L.divIcon({
       className: 'custom-user-marker bg-transparent border-0',
       html: `
         <div class="relative pointer-events-auto select-none" style="position: absolute; left: 0; top: 0;">
           <div class="flex items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
-            <div class="absolute w-6 h-6 bg-blue-500 rounded-full animate-ping opacity-40"></div>
-            <div class="relative flex items-center justify-center w-4 h-4 bg-blue-600 border border-white rounded-full shadow-md text-white">
+            <div class="absolute w-7 h-7 bg-emerald-500 rounded-full animate-ping opacity-35"></div>
+            <div class="relative flex items-center justify-center w-4 h-4 bg-emerald-600 border border-white rounded-full shadow-md text-white">
               <div class="w-1.5 h-1.5 bg-white rounded-full"></div>
             </div>
             <!-- Hover / Tap Label -->
-            <div class="absolute -top-6 px-1.5 py-0.5 bg-slate-900/90 text-blue-200 text-[10px] font-semibold rounded shadow-sm border border-blue-500/30 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+            <div class="absolute -top-6 px-1.5 py-0.5 bg-[#183315]/95 text-emerald-200 text-[10px] font-semibold rounded shadow-sm border border-emerald-500/40 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
               我的即時 GPS
             </div>
           </div>
@@ -196,24 +218,24 @@ export const MapView: React.FC<MapViewProps> = ({
     });
 
     marker.bindPopup(`
-      <div class="p-3 font-sans min-w-[200px] text-slate-900">
-        <div class="flex items-center gap-2 pb-2 border-b border-slate-200">
-          <div class="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></div>
-          <h4 class="font-bold text-sm text-slate-800">📍 我的當前 GPS 位置</h4>
+      <div class="p-3 font-sans min-w-[200px] text-slate-100 bg-[#183315] rounded-xl">
+        <div class="flex items-center gap-2 pb-2 border-b border-[#305c2a]">
+          <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+          <h4 class="font-bold text-sm text-emerald-100">📍 我的當前 GPS 位置</h4>
         </div>
-        <div class="mt-2 space-y-1 text-xs text-slate-600">
-          <div><span class="font-semibold text-slate-700">暱稱：</span>${myNickname || '尚未設定'}</div>
-          <div><span class="font-semibold text-slate-700">經度：</span>${longitude.toFixed(6)}</div>
-          <div><span class="font-semibold text-slate-700">緯度：</span>${latitude.toFixed(6)}</div>
-          <div><span class="font-semibold text-slate-700">精度：</span>±${Math.round(accuracy || 0)} 公尺</div>
-          <div><span class="font-semibold text-slate-700">狀態：</span>已就緒，可點擊「傳送位置」上傳</div>
+        <div class="mt-2 space-y-1 text-xs text-emerald-100/85">
+          <div><span class="font-semibold text-emerald-300">暱稱：</span>${myNickname || '尚未設定'}</div>
+          <div><span class="font-semibold text-emerald-300">經度：</span>${longitude.toFixed(6)}</div>
+          <div><span class="font-semibold text-emerald-300">緯度：</span>${latitude.toFixed(6)}</div>
+          <div><span class="font-semibold text-emerald-300">精度：</span>±${Math.round(accuracy || 0)} 公尺</div>
+          <div class="text-[11px] text-emerald-300/80 pt-1">點擊下方「傳送位置」可更新並同步至群組</div>
         </div>
       </div>
     `);
 
     userGroup.addLayer(marker);
 
-    // If auto-follow is active or this is first load, pan map
+    // If auto-follow is active, pan map
     if (autoFollow && mapInstanceRef.current) {
       mapInstanceRef.current.panTo([latitude, longitude], { animate: true });
     }
@@ -234,21 +256,19 @@ export const MapView: React.FC<MapViewProps> = ({
 
       // 1. Draw Polyline if there are 2 or 3 points
       if (latLngs.length >= 2) {
-        // Subtle shadow/halo line
         const shadowPolyline = L.polyline(latLngs, {
-          color: '#0f172a',
+          color: '#122810',
           weight: 6,
-          opacity: 0.4,
+          opacity: 0.5,
           lineCap: 'round',
           lineJoin: 'round',
         });
         trailGroup.addLayer(shadowPolyline);
 
-        // Main colored line connecting last 3 points
         const mainPolyline = L.polyline(latLngs, {
           color: trail.color,
           weight: 3.5,
-          opacity: 0.9,
+          opacity: 0.95,
           dashArray: '6, 6',
           lineCap: 'round',
           lineJoin: 'round',
@@ -279,21 +299,17 @@ export const MapView: React.FC<MapViewProps> = ({
         let icon: L.DivIcon;
 
         if (isLatest) {
-          // Newest point: sleek, compact, elegant avatar pin (no permanent huge label blocking the screen, clean & refined)
           icon = L.divIcon({
             className: 'custom-latest-marker bg-transparent border-0',
             html: `
               <div class="relative pointer-events-auto select-none" style="position: absolute; left: 0; top: 0;">
                 <div class="flex flex-col items-center cursor-pointer group" style="transform: translate(-50%, -100%);">
-                  <!-- Compact Pin Head -->
                   <div class="relative flex items-center justify-center w-5 h-5 rounded-full border border-white shadow-md text-white font-bold text-[10px] transition-transform group-hover:scale-125"
                        style="background-color: ${trail.color};">
                     <span>${trail.nickname.slice(0, 1).toUpperCase()}</span>
-                    <!-- Bottom pointer arrow -->
                     <div class="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rotate-45 border-r border-b border-white"
                          style="background-color: ${trail.color};"></div>
                   </div>
-                  <!-- Subtle hover label shown only on hover/tap -->
                   <div class="absolute -top-6 px-1.5 py-0.5 text-[10px] font-semibold text-white rounded-md shadow-sm border border-white/30 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
                        style="background-color: ${trail.color};">
                     ${trail.nickname}
@@ -307,7 +323,6 @@ export const MapView: React.FC<MapViewProps> = ({
             popupAnchor: [0, -26],
           });
         } else {
-          // Older history points (2nd or 3rd latest): small solid color dots (no numbers), clean and non-distracting
           icon = L.divIcon({
             className: 'custom-history-marker bg-transparent border-0',
             html: `
@@ -316,8 +331,7 @@ export const MapView: React.FC<MapViewProps> = ({
                   <div class="w-2.5 h-2.5 rounded-full border border-white shadow-sm transition-transform group-hover:scale-150"
                        style="background-color: ${trail.color}; opacity: 0.85;">
                   </div>
-                  <!-- Mini hover label with relative time -->
-                  <div class="absolute -bottom-5 px-1 py-0.5 bg-slate-900/90 text-slate-200 text-[9px] rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-700/60">
+                  <div class="absolute -bottom-5 px-1 py-0.5 bg-[#183315]/95 text-emerald-200 text-[9px] rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-[#305c2a]">
                     ${relativeTime}
                   </div>
                 </div>
@@ -334,47 +348,46 @@ export const MapView: React.FC<MapViewProps> = ({
           zIndexOffset: isLatest ? 500 : 100 + index,
         });
 
-        // Rich popup content as requested: 暱稱、時間、經緯度、點位順序
         const popupHtml = `
-          <div class="p-3 font-sans min-w-[220px] max-w-[280px] text-slate-900">
-            <div class="flex items-center justify-between pb-2 border-b border-slate-200 gap-2">
+          <div class="p-3 font-sans min-w-[220px] max-w-[280px] text-slate-100 bg-[#183315] rounded-xl">
+            <div class="flex items-center justify-between pb-2 border-b border-[#305c2a] gap-2">
               <div class="flex items-center gap-1.5">
                 <div class="w-3.5 h-3.5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" style="background-color: ${trail.color};">
                   ${trail.nickname.slice(0, 1)}
                 </div>
-                <h3 class="font-bold text-sm text-slate-800 truncate">${trail.nickname}</h3>
+                <h3 class="font-bold text-sm text-emerald-100 truncate">${trail.nickname}</h3>
               </div>
-              <span class="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+              <span class="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-[#122810] text-emerald-300 border border-[#305c2a]">
                 ${pointOrderDesc}
               </span>
             </div>
 
             <div class="mt-2.5 space-y-2 text-xs">
-              <div class="flex items-start gap-1.5 text-slate-600">
-                <span class="text-slate-400 font-medium min-w-[50px]">🕒 時間：</span>
-                <div class="text-slate-800 font-semibold">
+              <div class="flex items-start gap-1.5 text-emerald-100/90">
+                <span class="text-emerald-300/70 font-medium min-w-[50px]">🕒 時間：</span>
+                <div>
                   <div>${fullTime}</div>
-                  <div class="text-[11px] text-indigo-600 font-normal">(${relativeTime})</div>
+                  <div class="text-[11px] text-emerald-300 font-normal">(${relativeTime})</div>
                 </div>
               </div>
 
-              <div class="flex items-center gap-1.5 text-slate-600">
-                <span class="text-slate-400 font-medium min-w-[50px]">🌐 經緯：</span>
-                <span class="font-mono text-slate-700 text-[11px]">${record.latitude.toFixed(5)}, ${record.longitude.toFixed(5)}</span>
+              <div class="flex items-center gap-1.5 text-emerald-100/90">
+                <span class="text-emerald-300/70 font-medium min-w-[50px]">🌐 經緯：</span>
+                <span class="font-mono text-emerald-200 text-[11px]">${record.latitude.toFixed(5)}, ${record.longitude.toFixed(5)}</span>
               </div>
 
               ${
                 record.accuracy
-                  ? `<div class="flex items-center gap-1.5 text-slate-600">
-                      <span class="text-slate-400 font-medium min-w-[50px]">🎯 精度：</span>
-                      <span class="text-slate-700">±${Math.round(record.accuracy)} 公尺</span>
+                  ? `<div class="flex items-center gap-1.5 text-emerald-100/90">
+                      <span class="text-emerald-300/70 font-medium min-w-[50px]">🎯 精度：</span>
+                      <span class="text-emerald-200">±${Math.round(record.accuracy)} 公尺</span>
                     </div>`
                   : ''
               }
 
-              <div class="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
-                <span>UUID: ${record.uuid ? record.uuid.slice(0, 8) + '...' : 'N/A'}</span>
+              <div class="pt-1.5 border-t border-[#305c2a] flex items-center justify-between text-[10px] text-emerald-300/60">
                 <span>第 ${index + 1}/${records.length} 筆</span>
+                <span class="text-emerald-400">即時同步</span>
               </div>
             </div>
           </div>
@@ -446,7 +459,7 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [trails, currentLocation, handlePanToMyLocation]);
 
   return (
-    <div className="relative w-full h-full min-h-[400px] overflow-hidden bg-slate-950">
+    <div className="relative w-full h-full min-h-[400px] overflow-hidden bg-[#2d5a27]">
       {/* Map Container */}
       <div
         id="leaflet-map-container"
@@ -461,10 +474,10 @@ export const MapView: React.FC<MapViewProps> = ({
           <button
             id="btn-map-layers"
             onClick={() => setShowLayerMenu(!showLayerMenu)}
-            className="flex items-center gap-2 px-3.5 py-2 bg-slate-900/90 hover:bg-slate-800 text-slate-100 text-xs font-semibold rounded-xl backdrop-blur-xl shadow-lg border border-slate-700/80 transition-all hover:border-slate-600 active:scale-95"
+            className="flex items-center gap-2 px-3.5 py-2 bg-[#1b3b17]/95 hover:bg-[#234b1e] text-white text-xs font-semibold rounded-xl backdrop-blur-xl shadow-lg border border-[#3e7237]/80 transition-all active:scale-95"
             title="切換免費圖層"
           >
-            <Layers className="w-4 h-4 text-emerald-400" />
+            <Layers className="w-4 h-4 text-emerald-300" />
             <span className="hidden sm:inline">圖層切換</span>
           </button>
 
@@ -472,9 +485,9 @@ export const MapView: React.FC<MapViewProps> = ({
           {showLayerMenu && (
             <div
               id="map-layers-dropdown"
-              className="absolute left-0 mt-2 w-56 p-1.5 bg-slate-900/95 backdrop-blur-xl rounded-xl shadow-2xl border border-slate-700/80 z-30 animate-in fade-in zoom-in-95 duration-150"
+              className="absolute left-0 mt-2 w-56 p-1.5 bg-[#183315]/95 backdrop-blur-xl rounded-xl shadow-2xl border border-[#3e7237]/80 z-30 animate-in fade-in zoom-in-95 duration-150"
             >
-              <div className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <div className="px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300/70 uppercase tracking-wider">
                 選擇免費地圖來源
               </div>
               {(Object.keys(TILE_PROVIDERS) as MapTileProvider[]).map((key) => {
@@ -490,8 +503,8 @@ export const MapView: React.FC<MapViewProps> = ({
                     }}
                     className={`w-full text-left px-3 py-2 text-xs rounded-lg flex items-center justify-between transition-colors ${
                       isActive
-                        ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30'
-                        : 'text-slate-200 hover:bg-slate-800'
+                        ? 'bg-emerald-500/25 text-emerald-200 font-bold border border-emerald-500/40'
+                        : 'text-emerald-100 hover:bg-[#234b1e]'
                     }`}
                   >
                     <span>{item.name}</span>
@@ -510,10 +523,10 @@ export const MapView: React.FC<MapViewProps> = ({
         <button
           id="btn-fit-all"
           onClick={handleFitAllMarkers}
-          className="p-2.5 bg-slate-900/90 hover:bg-slate-800 text-slate-100 rounded-xl backdrop-blur-xl shadow-lg border border-slate-700/80 transition-all hover:border-slate-600 active:scale-95 flex items-center justify-center group"
+          className="p-2.5 bg-[#1b3b17]/95 hover:bg-[#234b1e] text-white rounded-xl backdrop-blur-xl shadow-lg border border-[#3e7237]/80 transition-all active:scale-95 flex items-center justify-center group"
           title="全覽所有朋友與我的位置"
         >
-          <Maximize2 className="w-4 h-4 text-indigo-400 group-hover:text-indigo-300" />
+          <Maximize2 className="w-4 h-4 text-emerald-300 group-hover:text-emerald-200" />
         </button>
 
         {/* Locate Me */}
@@ -522,14 +535,14 @@ export const MapView: React.FC<MapViewProps> = ({
           onClick={handlePanToMyLocation}
           className={`p-2.5 rounded-xl backdrop-blur-xl shadow-lg border transition-all hover:scale-105 active:scale-95 flex items-center justify-center group ${
             currentLocation.coords
-              ? 'bg-blue-600/90 hover:bg-blue-500 text-white border-blue-400/50'
-              : 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 border-slate-700/80 hover:border-slate-600'
+              ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400/60 shadow-emerald-950/40'
+              : 'bg-[#1b3b17]/95 hover:bg-[#234b1e] text-emerald-200 border-[#3e7237]/80'
           }`}
           title="移動到我的 GPS 位置"
         >
           <Locate
             className={`w-4 h-4 ${
-              currentLocation.isLocating ? 'animate-spin text-amber-300' : 'text-blue-200'
+              currentLocation.isLocating ? 'animate-spin text-amber-300' : 'text-white'
             }`}
           />
         </button>
@@ -537,21 +550,21 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Map Legend Overlay at Bottom-Left */}
       <div className="absolute bottom-6 left-4 z-20 pointer-events-none hidden md:block">
-        <div className="p-3 bg-slate-900/90 backdrop-blur-xl rounded-xl border border-slate-700/80 shadow-xl text-xs space-y-1.5 text-slate-300 pointer-events-auto max-w-xs">
-          <div className="font-semibold text-slate-100 flex items-center gap-1.5 pb-1 border-b border-slate-800">
+        <div className="p-3 bg-[#183315]/95 backdrop-blur-xl rounded-xl border border-[#3e7237]/80 shadow-xl text-xs space-y-1.5 text-emerald-100 pointer-events-auto max-w-xs">
+          <div className="font-semibold text-white flex items-center gap-1.5 pb-1 border-b border-[#305c2a]">
             <Compass className="w-3.5 h-3.5 text-emerald-400" />
             <span>地圖軌跡說明</span>
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-slate-300">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping"></span>
-            <span>藍色光環：我的 GPS 即時定位</span>
+          <div className="flex items-center gap-2 text-[11px] text-emerald-100/90">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+            <span>綠色光環：我的 GPS 即時定位</span>
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-slate-300">
-            <span className="w-4 h-1 border-t-2 border-dashed border-emerald-400"></span>
+          <div className="flex items-center gap-2 text-[11px] text-emerald-100/90">
+            <span className="w-4 h-1 border-t-2 border-dashed border-emerald-300"></span>
             <span>虛線連線：同暱稱最近 3 筆軌跡</span>
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-slate-300">
-            <span className="w-3.5 h-3.5 rounded-full bg-pink-500 text-[8px] flex items-center justify-center font-bold text-white shadow-xs">
+          <div className="flex items-center gap-2 text-[11px] text-emerald-100/90">
+            <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 text-[8px] flex items-center justify-center font-bold text-white shadow-xs">
               A
             </span>
             <span>點選點位：查看暱稱、時間與座標</span>

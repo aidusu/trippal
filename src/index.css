@@ -5,6 +5,8 @@ body {
   font-family: 'Plus Jakarta Sans', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #2d5a27;
+  color: #f0fdf4;
 }
 
 /* Custom Scrollbar */
@@ -14,16 +16,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: #193616;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #2f5c29;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #447a3c;
 }
 
 /* Leaflet Map & Custom Markers */
@@ -31,7 +33,7 @@ body {
   width: 100%;
   height: 100%;
   font-family: inherit;
-  background-color: #020617 !important;
+  background-color: #2d5a27 !important;
 }
 
 .leaflet-div-icon {
@@ -39,14 +41,14 @@ body {
   border: none !important;
 }
 
-/* Custom Popup Style - Professional Polish */
+/* Custom Popup Style */
 .custom-leaflet-popup .leaflet-popup-content-wrapper {
-  background: #0f172a;
+  background: #183315;
   color: #f8fafc;
   border-radius: 14px;
   padding: 0;
   box-shadow: 0 20px 30px -8px rgba(0, 0, 0, 0.6), 0 8px 16px -4px rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(51, 65, 85, 0.85);
+  border: 1px solid rgba(62, 114, 55, 0.85);
   backdrop-filter: blur(12px);
 }
 
@@ -56,8 +58,8 @@ body {
 }
 
 .custom-leaflet-popup .leaflet-popup-tip {
-  background: #0f172a;
-  border: 1px solid rgba(51, 65, 85, 0.85);
+  background: #183315;
+  border: 1px solid rgba(62, 114, 55, 0.85);
   border-top: none;
   border-left: none;
 }
@@ -65,21 +67,21 @@ body {
 .custom-leaflet-popup a.leaflet-popup-close-button {
   top: 10px;
   right: 10px;
-  color: #94a3b8;
+  color: #a7f3d0;
   padding: 4px;
   font-size: 16px;
   transition: color 0.15s ease;
 }
 
 .custom-leaflet-popup a.leaflet-popup-close-button:hover {
-  color: #f8fafc;
+  color: #ffffff;
 }
 
 /* Tooltip style */
 .leaflet-custom-tooltip {
-  background: rgba(15, 23, 42, 0.95) !important;
-  color: #f8fafc !important;
-  border: 1px solid rgba(51, 65, 85, 0.9) !important;
+  background: rgba(24, 51, 21, 0.95) !important;
+  color: #f0fdf4 !important;
+  border: 1px solid rgba(62, 114, 55, 0.9) !important;
   border-radius: 8px !important;
   font-size: 11px !important;
   font-weight: 600 !important;
@@ -89,7 +91,7 @@ body {
 }
 
 .leaflet-custom-tooltip::before {
-  border-top-color: #0f172a !important;
+  border-top-color: #183315 !important;
 }
 
 /* Custom Marker Pulsing & Glow Animations */
@@ -111,5 +113,3 @@ body {
 .animate-marker-glow {
   animation: marker-pulse 2s infinite ease-in-out;
 }
-
-

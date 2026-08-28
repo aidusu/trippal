@@ -60,10 +60,16 @@ export default function App() {
   const [isRealtime, setIsRealtime] = useState<boolean>(true);
   const [dbConnected, setDbConnected] = useState<boolean>(true);
 
-  // 4. Action States
+  // 4. Action States & Map Centering
   const [isSending, setIsSending] = useState<boolean>(false);
   const [lastSentTime, setLastSentTime] = useState<number | null>(null);
-  const [autoSendInterval, setAutoSendInterval] = useState<number>(0);
+  const [autoSendInterval, setAutoSendInterval] = useState<number>(0); // 0 = manual, 60 = 1m, 300 = 5m, 600 = 10m
+  const [autoSendCount, setAutoSendCount] = useState<number>(0); // auto-send count, max 6
+  const [mapCenterCoords, setMapCenterCoords] = useState<{
+    latitude: number;
+    longitude: number;
+    trigger: number;
+  } | null>(null);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<{
     text: string;
@@ -174,14 +180,15 @@ export default function App() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        const coords = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          speed: position.coords.speed,
+          heading: position.coords.heading,
+        };
         setCurrentLocation({
-          coords: {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            speed: position.coords.speed,
-            heading: position.coords.heading,
-          },
+          coords,
           error: null,
           isLocating: false,
           lastUpdated: Date.now(),
@@ -189,7 +196,6 @@ export default function App() {
       },
       (error) => {
         console.warn('Geolocation error:', error.message);
-        // Fallback default coordinates (Taipei 101 area) for seamless exploration if GPS is blocked
         setCurrentLocation((prev) => ({
           coords: prev.coords || {
             latitude: 25.0339,
@@ -271,11 +277,10 @@ export default function App() {
     };
   }, [dbConfig, authUser]);
 
-  // Handle Send Location to Firebase
+  // Handle Send Location to Firebase & Center Map on the new point
   const handleSendLocation = async () => {
     const currentNick = nickname.trim() || (authUser?.nickname || '我的暱稱');
 
-    // If no coordinates yet, try to obtain them first
     let lat = currentLocation.coords?.latitude;
     let lng = currentLocation.coords?.longitude;
     let accuracy = currentLocation.coords?.accuracy;
@@ -309,7 +314,6 @@ export default function App() {
           );
         });
       } catch (e) {
-        // Fallback default
         lat = 25.0339;
         lng = 121.5644;
       }
@@ -337,7 +341,14 @@ export default function App() {
 
     if (res.success) {
       setLastSentTime(now);
-      showToast(`已成功傳送位置！(${currentNick})`, 'success');
+      // Center map on the newly transmitted location
+      setMapCenterCoords({
+        latitude: lat!,
+        longitude: lng!,
+        trigger: now,
+      });
+
+      showToast(`已成功傳送位置！地圖已移至最新座標 (${currentNick})`, 'success');
 
       // Optimistically insert to local view if not already included
       setRawRecords((prev) => {
@@ -349,7 +360,24 @@ export default function App() {
     }
   };
 
-  // Auto-send timer mechanism
+  // Change Auto-send interval & reset count
+  const handleAutoSendIntervalChange = (sec: number) => {
+    setAutoSendInterval(sec);
+    setAutoSendCount(0);
+    if (sec > 0) {
+      showToast(`已啟用自動傳送 (每 ${sec / 60} 分鐘，上限 6 筆)`, 'info');
+    } else {
+      showToast('已切換為手動傳送模式', 'info');
+    }
+  };
+
+  // Reset Auto-send limit to continue
+  const handleResetAutoSendLimit = () => {
+    setAutoSendCount(0);
+    showToast('已重設自動傳送計數，繼續自動傳送', 'info');
+  };
+
+  // Auto-send timer mechanism (Limits to max 6 records)
   useEffect(() => {
     if (autoSendTimerRef.current) {
       clearInterval(autoSendTimerRef.current);
@@ -358,7 +386,16 @@ export default function App() {
 
     if (autoSendInterval > 0 && nickname.trim() && authUser) {
       autoSendTimerRef.current = window.setInterval(() => {
-        handleSendLocation();
+        setAutoSendCount((prevCount) => {
+          if (prevCount >= 6) {
+            // Pause auto sending when 6 records reached
+            setAutoSendInterval(0);
+            showToast('已達到自動傳送 6 筆上限（以降低負載）。請點擊傳送或重新開啟自動傳送。', 'info');
+            return prevCount;
+          }
+          handleSendLocation();
+          return prevCount + 1;
+        });
       }, autoSendInterval * 1000);
     }
 
@@ -490,7 +527,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 select-none font-sans">
+    <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#2d5a27] text-slate-100 select-none font-sans">
       {/* Top App Header with TripPal branding, Account email, and Editable nickname */}
       <Header
         onlineCount={userTrails.length}
@@ -508,15 +545,15 @@ export default function App() {
 
       {/* GPS Warning Banner if permission denied */}
       {currentLocation.error && (
-        <div className="px-4 py-2.5 bg-amber-950/80 border-b border-amber-800/60 text-amber-200 text-xs flex items-center justify-between z-20 backdrop-blur-md">
+        <div className="px-4 py-2 bg-amber-950/85 border-b border-amber-600/60 text-amber-200 text-xs flex items-center justify-between z-20 backdrop-blur-md">
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <AlertCircle className="w-4 h-4 text-amber-300 shrink-0" />
             <span className="font-medium">{currentLocation.error}</span>
           </div>
           <button
             id="btn-retry-location-banner"
             onClick={refreshLocation}
-            className="px-3 py-1 bg-amber-800/80 hover:bg-amber-700 text-white rounded-lg text-[11px] font-semibold shrink-0 transition-colors shadow-xs"
+            className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded-lg text-[11px] font-bold shrink-0 transition-colors shadow-xs"
           >
             重新取得定位
           </button>
@@ -530,6 +567,7 @@ export default function App() {
           currentLocation={currentLocation}
           myNickname={nickname}
           selectedUserId={selectedUser}
+          centerCoords={mapCenterCoords}
           onSelectUser={(nick) => setSelectedUser(nick)}
           onLocateMeRequest={refreshLocation}
         />
@@ -545,7 +583,10 @@ export default function App() {
         isSending={isSending}
         lastSentTime={lastSentTime}
         autoSendInterval={autoSendInterval}
-        onAutoSendIntervalChange={(sec) => setAutoSendInterval(sec)}
+        onAutoSendIntervalChange={handleAutoSendIntervalChange}
+        autoSendCount={autoSendCount}
+        maxAutoSendCount={6}
+        onResetAutoSendLimit={handleResetAutoSendLimit}
         onRefreshLocation={refreshLocation}
         trails={userTrails}
         onSelectUser={(nick) => setSelectedUser(nick)}
@@ -557,18 +598,18 @@ export default function App() {
       {toastMessage && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-none">
           <div
-            className={`px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold flex items-center gap-2 border backdrop-blur-xl pointer-events-auto ${
+            className={`px-4 py-2.5 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2 border backdrop-blur-xl pointer-events-auto ${
               toastMessage.type === 'success'
-                ? 'bg-emerald-950/90 text-emerald-100 border-emerald-500/50 shadow-emerald-950/50'
+                ? 'bg-[#183315]/95 text-emerald-100 border-emerald-400 shadow-black/50'
                 : toastMessage.type === 'error'
-                ? 'bg-red-950/90 text-red-100 border-red-500/50 shadow-red-950/50'
-                : 'bg-slate-900/90 text-slate-100 border-slate-700/80 shadow-black/50'
+                ? 'bg-red-950/95 text-red-100 border-red-500 shadow-black/50'
+                : 'bg-[#1b3b17]/95 text-white border-emerald-500/60 shadow-black/50'
             }`}
           >
             {toastMessage.type === 'success' ? (
               <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
             ) : (
-              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <AlertCircle className="w-4 h-4 text-amber-300 shrink-0" />
             )}
             <span>{toastMessage.text}</span>
           </div>
