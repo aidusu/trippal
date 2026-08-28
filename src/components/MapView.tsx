@@ -168,22 +168,26 @@ export const MapView: React.FC<MapViewProps> = ({
       userGroup.addLayer(circle);
     }
 
-    // My Location Pulsing Marker
+    // My Location Pulsing Marker (Accurately Centered, clean & compact)
     const myLocationIcon = L.divIcon({
-      className: 'custom-user-marker',
+      className: 'custom-user-marker bg-transparent border-0',
       html: `
-        <div class="relative flex items-center justify-center w-8 h-8 -ml-4 -mt-4 cursor-pointer group">
-          <div class="absolute inset-0 bg-blue-500 rounded-full animate-ping opacity-60"></div>
-          <div class="relative flex items-center justify-center w-6 h-6 bg-blue-600 border-2 border-white rounded-full shadow-lg text-white">
-            <div class="w-2 h-2 bg-white rounded-full"></div>
-          </div>
-          <div class="absolute -top-7 px-2 py-0.5 bg-slate-900/90 text-blue-200 text-xs font-semibold rounded-md shadow border border-blue-500/30 whitespace-nowrap pointer-events-none">
-            我的即時 GPS
+        <div class="relative pointer-events-auto select-none" style="position: absolute; left: 0; top: 0;">
+          <div class="flex items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
+            <div class="absolute w-6 h-6 bg-blue-500 rounded-full animate-ping opacity-40"></div>
+            <div class="relative flex items-center justify-center w-4 h-4 bg-blue-600 border border-white rounded-full shadow-md text-white">
+              <div class="w-1.5 h-1.5 bg-white rounded-full"></div>
+            </div>
+            <!-- Hover / Tap Label -->
+            <div class="absolute -top-6 px-1.5 py-0.5 bg-slate-900/90 text-blue-200 text-[10px] font-semibold rounded shadow-sm border border-blue-500/30 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              我的即時 GPS
+            </div>
           </div>
         </div>
       `,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
+      iconSize: [0, 0],
+      iconAnchor: [0, 0],
+      popupAnchor: [0, -12],
     });
 
     const marker = L.marker([latitude, longitude], {
@@ -275,51 +279,53 @@ export const MapView: React.FC<MapViewProps> = ({
         let icon: L.DivIcon;
 
         if (isLatest) {
-          // Newest point: prominent avatar marker with glowing ring and name badge
+          // Newest point: sleek, compact, elegant avatar pin (no permanent huge label blocking the screen, clean & refined)
           icon = L.divIcon({
-            className: 'custom-latest-marker',
+            className: 'custom-latest-marker bg-transparent border-0',
             html: `
-              <div class="relative flex flex-col items-center cursor-pointer group" style="transform: translate(-50%, -100%);">
-                <!-- Name Badge -->
-                <div class="px-2.5 py-1 mb-1 text-xs font-bold text-white rounded-full shadow-md border border-white/40 flex items-center gap-1.5 whitespace-nowrap transition-transform duration-200 group-hover:scale-110"
-                     style="background-color: ${trail.color}; box-shadow: 0 4px 12px ${trail.color}66;">
-                  <span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
-                  <span>${trail.nickname}</span>
-                </div>
-                <!-- Pin Head -->
-                <div class="relative flex items-center justify-center w-8 h-8 rounded-full border-2 border-white shadow-xl text-white font-bold text-xs"
-                     style="background-color: ${trail.color};">
-                  <span>${trail.nickname.slice(0, 1).toUpperCase()}</span>
-                  <!-- Bottom pointer arrow -->
-                  <div class="absolute -bottom-1 w-2.5 h-2.5 rotate-45 border-r-2 border-b-2 border-white"
-                       style="background-color: ${trail.color};"></div>
+              <div class="relative pointer-events-auto select-none" style="position: absolute; left: 0; top: 0;">
+                <div class="flex flex-col items-center cursor-pointer group" style="transform: translate(-50%, -100%);">
+                  <!-- Compact Pin Head -->
+                  <div class="relative flex items-center justify-center w-5 h-5 rounded-full border border-white shadow-md text-white font-bold text-[10px] transition-transform group-hover:scale-125"
+                       style="background-color: ${trail.color};">
+                    <span>${trail.nickname.slice(0, 1).toUpperCase()}</span>
+                    <!-- Bottom pointer arrow -->
+                    <div class="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rotate-45 border-r border-b border-white"
+                         style="background-color: ${trail.color};"></div>
+                  </div>
+                  <!-- Subtle hover label shown only on hover/tap -->
+                  <div class="absolute -top-6 px-1.5 py-0.5 text-[10px] font-semibold text-white rounded-md shadow-sm border border-white/30 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                       style="background-color: ${trail.color};">
+                    ${trail.nickname}
+                  </div>
+                  <div class="w-0.5 h-0.5"></div>
                 </div>
               </div>
             `,
-            iconSize: [40, 48],
-            iconAnchor: [20, 48],
-            popupAnchor: [0, -48],
+            iconSize: [0, 0],
+            iconAnchor: [0, 0],
+            popupAnchor: [0, -26],
           });
         } else {
-          // Older history points (2nd or 3rd latest)
-          const stepNumber = totalPoints === 3 && index === 0 ? '3' : '2';
+          // Older history points (2nd or 3rd latest): small solid color dots (no numbers), clean and non-distracting
           icon = L.divIcon({
-            className: 'custom-history-marker',
+            className: 'custom-history-marker bg-transparent border-0',
             html: `
-              <div class="relative flex items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
-                <div class="w-6 h-6 rounded-full border-2 border-white shadow-md flex items-center justify-center text-[10px] font-bold text-white transition-transform group-hover:scale-125"
-                     style="background-color: ${trail.color}; opacity: 0.85;">
-                  ${stepNumber}
-                </div>
-                <!-- Mini hover label -->
-                <div class="absolute -bottom-6 px-1.5 py-0.5 bg-slate-900/90 text-white text-[10px] rounded shadow opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  ${relativeTime}
+              <div class="relative pointer-events-auto select-none" style="position: absolute; left: 0; top: 0;">
+                <div class="flex items-center justify-center cursor-pointer group" style="transform: translate(-50%, -50%);">
+                  <div class="w-2.5 h-2.5 rounded-full border border-white shadow-sm transition-transform group-hover:scale-150"
+                       style="background-color: ${trail.color}; opacity: 0.85;">
+                  </div>
+                  <!-- Mini hover label with relative time -->
+                  <div class="absolute -bottom-5 px-1 py-0.5 bg-slate-900/90 text-slate-200 text-[9px] rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-slate-700/60">
+                    ${relativeTime}
+                  </div>
                 </div>
               </div>
             `,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12],
-            popupAnchor: [0, -12],
+            iconSize: [0, 0],
+            iconAnchor: [0, 0],
+            popupAnchor: [0, -8],
           });
         }
 

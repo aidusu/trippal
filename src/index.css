@@ -34,6 +34,11 @@ body {
   background-color: #020617 !important;
 }
 
+.leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
 /* Custom Popup Style - Professional Polish */
 .custom-leaflet-popup .leaflet-popup-content-wrapper {
   background: #0f172a;
