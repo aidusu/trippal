@@ -661,15 +661,19 @@ function startRestPolling(
 function parseFirebaseSnapshot(val: any): LocationRecord[] {
   if (!val) return [];
   const records: LocationRecord[] = [];
-  const ONE_HOUR_MS = 60 * 60 * 1000;
-  const cutoffTime = Date.now() - ONE_HOUR_MS;
+  const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+  const cutoffTime = Date.now() - TWELVE_HOURS_MS;
 
   if (typeof val === 'object') {
     Object.keys(val).forEach((key) => {
       const item = val[key];
-      if (item && typeof item === 'object' && item.latitude && item.longitude) {
-        const itemTimestamp = typeof item.timestamp === 'number' ? item.timestamp : Date.now();
-        // Strictly filter to only display records from the last 1 hour
+      if (item && typeof item === 'object' && item.latitude !== undefined && item.longitude !== undefined) {
+        let itemTimestamp = typeof item.timestamp === 'number' ? item.timestamp : Number(item.timestamp);
+        if (!itemTimestamp || isNaN(itemTimestamp)) {
+          itemTimestamp = Date.now();
+        }
+
+        // Filter out records older than 12 hours
         if (itemTimestamp < cutoffTime) {
           return;
         }
@@ -683,8 +687,8 @@ function parseFirebaseSnapshot(val: any): LocationRecord[] {
           latitude: Number(item.latitude),
           longitude: Number(item.longitude),
           accuracy: item.accuracy ? Number(item.accuracy) : undefined,
-          speed: item.speed !== undefined ? Number(item.speed) : null,
-          heading: item.heading !== undefined ? Number(item.heading) : null,
+          speed: item.speed !== undefined && item.speed !== null ? Number(item.speed) : null,
+          heading: item.heading !== undefined && item.heading !== null ? Number(item.heading) : null,
         });
       }
     });

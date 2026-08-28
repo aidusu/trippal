@@ -1,20 +1,23 @@
 import { LocationRecord, UserTrail } from '../types';
 import { getUserColor } from './colors';
 
-export const ONE_HOUR_MS = 60 * 60 * 1000; // 1 hour (3,600,000 ms)
+export const RETENTION_MS = 12 * 60 * 60 * 1000; // 12 hours (43,200,000 ms)
 
 /**
  * Groups all records by user (nickname/uuid), sorts chronologically,
  * and extracts the most recent 3 records for polyline connection.
- * STRICTLY filters to only display data from within the last 1 hour.
+ * Filters to only display active data within recent 12 hours.
  */
 export function buildUserTrails(records: LocationRecord[], currentTime: number = Date.now()): UserTrail[] {
   const map = new Map<string, LocationRecord[]>();
-  const oneHourAgo = currentTime - ONE_HOUR_MS;
+  const cutoffTime = currentTime - RETENTION_MS;
 
-  // Filter out any records older than 1 hour (超過一個小時的資料就不顯示)
+  // Filter records within retention window
   const validRecords = records.filter(
-    (record) => typeof record.timestamp === 'number' && record.timestamp >= oneHourAgo
+    (record) => {
+      const ts = typeof record.timestamp === 'number' ? record.timestamp : Number(record.timestamp);
+      return !isNaN(ts) && ts >= cutoffTime;
+    }
   );
 
   // Group by nickname (or uuid as fallback)

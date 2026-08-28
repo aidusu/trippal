@@ -318,6 +318,35 @@ export default function App() {
     };
   }, [dbConfig, authUser]);
 
+  // Automatically broadcast location to Firebase when user logs in and coordinates are acquired
+  const hasAutoBroadcastedRef = useRef<boolean>(false);
+  useEffect(() => {
+    if (!authUser) {
+      hasAutoBroadcastedRef.current = false;
+      return;
+    }
+    if (currentLocation.coords && dbConnected && !hasAutoBroadcastedRef.current) {
+      hasAutoBroadcastedRef.current = true;
+      const currentNick = nickname.trim() || authUser.nickname || '我的暱稱';
+      const now = Date.now();
+      const record: LocationRecord = {
+        id: `loc_${now}_${Math.random().toString(36).substring(2, 7)}`,
+        uuid: authUser.uid || uuid,
+        nickname: currentNick,
+        timestamp: now,
+        formattedTime: formatDateTime(now),
+        latitude: currentLocation.coords.latitude,
+        longitude: currentLocation.coords.longitude,
+        accuracy: currentLocation.coords.accuracy || 15,
+        speed: currentLocation.coords.speed !== undefined ? currentLocation.coords.speed : null,
+        heading: currentLocation.coords.heading !== undefined ? currentLocation.coords.heading : null,
+      };
+      sendLocationRecord(record, dbConfig).catch((err) =>
+        console.log('Auto broadcast initial sync:', err)
+      );
+    }
+  }, [authUser, currentLocation.coords, dbConnected, nickname, uuid, dbConfig]);
+
   // Handle Send Location to Firebase & Center Map on the new point
   const handleSendLocation = async () => {
     const currentNick = nickname.trim() || (authUser?.nickname || '我的暱稱');
