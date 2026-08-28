@@ -165,19 +165,21 @@ export default function App() {
     return () => unsub();
   }, [dbConfig]);
 
-  // Obtain GPS Location (HTML5 Geolocation API)
+  // Obtain GPS Location (HTML5 Geolocation API) with fresh maximumAge:0 & fallback
   const refreshLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setCurrentLocation((prev) => ({
         ...prev,
         isLocating: false,
-        error: '您的瀏覽器不支援 GPS 地理定位',
+        error: '按右鍵 重新尋找GPS',
       }));
+      showToast('您的瀏覽器不支援 GPS 地理定位', 'error');
       return;
     }
 
     setCurrentLocation((prev) => ({ ...prev, isLocating: true, error: null }));
 
+    // Strategy 1: High Accuracy GPS (hardware fix)
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const coords = {
@@ -193,29 +195,68 @@ export default function App() {
           isLocating: false,
           lastUpdated: Date.now(),
         });
+        setMapCenterCoords({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          trigger: Date.now(),
+        });
+        showToast(`已取得最新 GPS 定位！(精度 ±${Math.round(coords.accuracy || 0)}m)`, 'success');
       },
       (error) => {
-        console.warn('Geolocation error:', error.message);
-        setCurrentLocation((prev) => ({
-          coords: prev.coords || {
-            latitude: 25.0339,
-            longitude: 121.5644,
-            accuracy: 60,
-            speed: null,
-            heading: null,
+        console.warn('High accuracy GPS error, trying network fallback:', error.message);
+        // Strategy 2: Network / Cell Assisted Geolocation fallback
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const coords = {
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              accuracy: pos.coords.accuracy,
+              speed: pos.coords.speed,
+              heading: pos.coords.heading,
+            };
+            setCurrentLocation({
+              coords,
+              error: null,
+              isLocating: false,
+              lastUpdated: Date.now(),
+            });
+            setMapCenterCoords({
+              latitude: coords.latitude,
+              longitude: coords.longitude,
+              trigger: Date.now(),
+            });
+            showToast(`已取得最新定位 (網路輔助)！`, 'success');
           },
-          error: '無法存取精確 GPS，已使用預設探索位置 (可開啟瀏覽器定位權限後重試)',
-          isLocating: false,
-          lastUpdated: Date.now(),
-        }));
+          (err2) => {
+            console.warn('Geolocation fallback error:', err2.message);
+            setCurrentLocation((prev) => ({
+              coords: prev.coords || {
+                latitude: 25.0339,
+                longitude: 121.5644,
+                accuracy: 60,
+                speed: null,
+                heading: null,
+              },
+              error: '按右鍵 重新尋找GPS',
+              isLocating: false,
+              lastUpdated: Date.now(),
+            }));
+            showToast('GPS 定位失敗，請確認瀏覽器已開啟定位權限，或在地圖上按右鍵重試', 'error');
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: 10000,
+            maximumAge: 0,
+          }
+        );
       },
       {
         enableHighAccuracy: true,
         timeout: 10000,
-        maximumAge: 5000,
+        maximumAge: 0, // Force fresh query, do NOT use stale cache
       }
     );
-  }, []);
+  }, [showToast]);
 
   // Continuous Geolocation Watch
   useEffect(() => {
@@ -246,7 +287,7 @@ export default function App() {
       {
         enableHighAccuracy: true,
         timeout: 15000,
-        maximumAge: 10000,
+        maximumAge: 0,
       }
     );
 
@@ -527,32 +568,47 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col w-screen h-screen overflow-hidden bg-[#2d5a27] text-slate-100 select-none font-sans">
+    <div
+      className="flex flex-col w-screen h-screen overflow-hidden bg-[#2d5a27] text-slate-100 font-sans"
+      onContextMenu={(e) => {
+        // Global right click triggers location refresh if desired
+        if ((e.target as HTMLElement)?.closest('#leaflet-map-container')) {
+          e.preventDefault();
+          refreshLocation();
+        }
+      }}
+    >
       {/* Top App Header with TripPal branding, Account email, and Editable nickname */}
       <Header
         onlineCount={userTrails.length}
-        isRealtime={isRealtime}
-        dbConnected={dbConnected}
         authUser={authUser}
         nickname={nickname}
         onNicknameChange={handleNicknameChange}
         onLogout={handleLogout}
-        onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenFriends={() => setIsFriendsOpen(true)}
-        onOpenGithubGuide={() => setIsGithubModalOpen(true)}
-        onAddDemoFriends={handleAddDemoFriends}
       />
 
       {/* GPS Warning Banner if permission denied */}
       {currentLocation.error && (
-        <div className="px-4 py-2 bg-amber-950/85 border-b border-amber-600/60 text-amber-200 text-xs flex items-center justify-between z-20 backdrop-blur-md">
+        <div
+          className="px-4 py-2 bg-amber-950/85 border-b border-amber-600/60 text-amber-200 text-xs flex items-center justify-between z-20 backdrop-blur-md cursor-pointer"
+          onClick={refreshLocation}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            refreshLocation();
+          }}
+          title="按右鍵或點擊以重新尋找 GPS"
+        >
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-amber-300 shrink-0" />
-            <span className="font-medium">{currentLocation.error}</span>
+            <span className="font-medium">按右鍵 重新尋找GPS</span>
           </div>
           <button
             id="btn-retry-location-banner"
-            onClick={refreshLocation}
+            onClick={(e) => {
+              e.stopPropagation();
+              refreshLocation();
+            }}
             className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded-lg text-[11px] font-bold shrink-0 transition-colors shadow-xs"
           >
             重新取得定位
@@ -561,7 +617,7 @@ export default function App() {
       )}
 
       {/* Main Map View Area */}
-      <main className="flex-1 relative w-full h-full overflow-hidden">
+      <main className="flex-1 min-h-0 relative w-full h-full overflow-hidden">
         <MapView
           trails={userTrails}
           currentLocation={currentLocation}

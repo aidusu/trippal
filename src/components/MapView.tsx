@@ -97,6 +97,20 @@ export const MapView: React.FC<MapViewProps> = ({
       zoom: defaultZoom,
       zoomControl: false,
       attributionControl: true,
+      dragging: true,
+      touchZoom: true,
+      scrollWheelZoom: true,
+      doubleClickZoom: true,
+      boxZoom: true,
+      keyboard: true,
+    });
+
+    // Right-click on map to trigger GPS refresh and recentering
+    map.on('contextmenu', (e: L.LeafletMouseEvent) => {
+      L.DomEvent.preventDefault(e.originalEvent);
+      if (onLocateMeRequest) {
+        onLocateMeRequest();
+      }
     });
 
     // Custom top-right zoom control
@@ -124,7 +138,19 @@ export const MapView: React.FC<MapViewProps> = ({
     userLocationLayerGroupRef.current = userGroup;
     mapInstanceRef.current = map;
 
+    // Ensure Leaflet size updates immediately when rendered or container resizes
+    const resizeObserver = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    if (mapContainerRef.current) {
+      resizeObserver.observe(mapContainerRef.current);
+    }
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+
     return () => {
+      resizeObserver.disconnect();
       map.remove();
       mapInstanceRef.current = null;
     };
@@ -459,7 +485,15 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [trails, currentLocation, handlePanToMyLocation]);
 
   return (
-    <div className="relative w-full h-full min-h-[400px] overflow-hidden bg-[#2d5a27]">
+    <div
+      className="relative w-full h-full min-h-0 flex-1 overflow-hidden bg-[#2d5a27]"
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (onLocateMeRequest) {
+          onLocateMeRequest();
+        }
+      }}
+    >
       {/* Map Container */}
       <div
         id="leaflet-map-container"

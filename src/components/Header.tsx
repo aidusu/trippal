@@ -2,11 +2,6 @@ import React, { useState } from 'react';
 import {
   MapPin,
   Users,
-  Database,
-  Wifi,
-  WifiOff,
-  Github,
-  Sparkles,
   User,
   Edit2,
   LogOut,
@@ -17,30 +12,20 @@ import { AuthUser } from '../types';
 
 interface HeaderProps {
   onlineCount: number;
-  isRealtime: boolean;
-  dbConnected: boolean;
   authUser: AuthUser | null;
   nickname: string;
   onNicknameChange: (name: string) => void;
   onLogout: () => void;
-  onOpenSettings: () => void;
   onOpenFriends: () => void;
-  onOpenGithubGuide: () => void;
-  onAddDemoFriends: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onlineCount,
-  isRealtime,
-  dbConnected,
   authUser,
   nickname,
   onNicknameChange,
   onLogout,
-  onOpenSettings,
   onOpenFriends,
-  onOpenGithubGuide,
-  onAddDemoFriends,
 }) => {
   const [isEditingNick, setIsEditingNick] = useState<boolean>(false);
   const [tempNick, setTempNick] = useState<string>(nickname);
@@ -61,7 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="h-16 px-3 sm:px-4 bg-[#1b3b17]/95 backdrop-blur-xl border-b border-[#305c2a] flex items-center justify-between z-30 shrink-0 select-none shadow-md gap-2">
+    <header className="h-16 px-3 sm:px-4 bg-[#1b3b17]/95 backdrop-blur-xl border-b border-[#305c2a] flex items-center justify-between z-30 shrink-0 shadow-md gap-2">
       {/* Brand & Logo */}
       <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
         <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-emerald-400 via-teal-500 to-green-600 flex items-center justify-center shadow-md shadow-black/40 ring-1 ring-white/30 shrink-0">
@@ -77,78 +62,20 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Center/Right Status & User Profile Navigation */}
-      <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-        {/* Firebase Connection Status Badge */}
-        <div
-          className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border backdrop-blur-md transition-all cursor-pointer hover:opacity-90 ${
-            dbConnected
-              ? isRealtime
-                ? 'bg-[#122810]/80 text-emerald-300 border-emerald-500/40 shadow-xs'
-                : 'bg-amber-950/60 text-amber-300 border-amber-500/40 shadow-xs'
-              : 'bg-red-950/60 text-red-300 border-red-500/40'
-          }`}
-          onClick={onOpenSettings}
-          title="點擊檢查 Firebase 資料庫連線"
-        >
-          {dbConnected ? (
-            <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-          ) : (
-            <WifiOff className="w-3.5 h-3.5 text-red-400" />
-          )}
-          <span className="hidden lg:inline">
-            {dbConnected
-              ? isRealtime
-                ? 'Firebase 即時同步'
-                : 'Firebase 連線模式'
-              : '連線中斷'}
-          </span>
-        </div>
-
+      {/* Right Controls: Friends Count & Logged in User Profile */}
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Friends Count Button */}
         <button
           id="btn-open-friends"
           onClick={onOpenFriends}
-          className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#122810]/80 hover:bg-[#1f421b] text-emerald-100 hover:text-white rounded-lg text-xs font-bold border border-[#305c2a] transition-all active:scale-95 shadow-xs"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#122810]/80 hover:bg-[#1f421b] text-emerald-100 hover:text-white rounded-lg text-xs font-bold border border-[#305c2a] transition-all active:scale-95 shadow-xs"
           title="群組成員列表 (上限 7 人)"
         >
-          <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-300" />
+          <Users className="w-4 h-4 text-emerald-300" />
           <span className="hidden sm:inline">朋友</span>
           <span className="px-1.5 py-0.5 bg-emerald-500/25 text-emerald-200 rounded-full text-[11px] font-mono leading-none">
             {onlineCount}/7
           </span>
-        </button>
-
-        {/* Quick Demo Simulator button */}
-        <button
-          id="btn-add-demo"
-          onClick={onAddDemoFriends}
-          className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 bg-[#122810]/80 hover:bg-[#1f421b] text-emerald-200 rounded-lg text-xs font-medium border border-[#305c2a] transition-colors shadow-xs"
-          title="模擬 2 位好友的最近 3 筆位置以測試軌跡連線"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-          <span>產生軌跡</span>
-        </button>
-
-        {/* Database Config Button */}
-        <button
-          id="btn-open-db-settings"
-          onClick={onOpenSettings}
-          className="p-1.5 sm:p-2 bg-[#122810]/80 hover:bg-[#1f421b] text-emerald-200 hover:text-white rounded-lg border border-[#305c2a] transition-all active:scale-95 shadow-xs"
-          title="Firebase 資料庫設定"
-        >
-          <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300" />
-        </button>
-
-        {/* GitHub Pages Modal Button */}
-        <button
-          id="btn-open-github-modal"
-          onClick={onOpenGithubGuide}
-          className="hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-lg text-xs font-bold shadow-md shadow-black/30 border border-emerald-400/40 transition-all hover:scale-[1.02] active:scale-95"
-          title="GitHub Pages 公開與分享指南"
-        >
-          <Github className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          <span className="hidden md:inline">發布</span>
         </button>
 
         {/* Logged in User Badge with Account Email & Editable Nickname */}
