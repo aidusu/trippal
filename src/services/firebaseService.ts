@@ -23,16 +23,30 @@ const STORAGE_KEY_AUTH_USER = 'trippal_auth_user_session';
 
 // Default configuration with user's trippal-70d7d project
 export const DEFAULT_DB_CONFIG: DatabaseConfig = {
-  databaseUrl: 'https://trippal-70d7d-default-rtdb.firebaseio.com',
-  roomKey: 'locations',
+  apiKey: 'AIzaSyA7eqBTcaxuPXaPV6wbA-zP5GwN2c2ExfM',
+  authDomain: 'trippal-70d7d.firebaseapp.com',
+  databaseUrl: 'https://trippal-70d7d-default-rtdb.asia-southeast1.firebasedatabase.app',
   projectId: 'trippal-70d7d',
+  storageBucket: 'trippal-70d7d.firebasestorage.app',
+  messagingSenderId: '444650377829',
+  appId: '1:444650377829:web:8a84915421cbf1bad5ec8c',
+  measurementId: 'G-0GS6JZL3NX',
+  roomKey: 'locations',
 };
 
 export function getSavedDbConfig(): DatabaseConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DB_CONFIG);
     if (raw) {
-      return { ...DEFAULT_DB_CONFIG, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_DB_CONFIG,
+        ...parsed,
+        apiKey: parsed.apiKey || DEFAULT_DB_CONFIG.apiKey,
+        databaseUrl: parsed.databaseUrl || DEFAULT_DB_CONFIG.databaseUrl,
+        authDomain: parsed.authDomain || DEFAULT_DB_CONFIG.authDomain,
+        projectId: parsed.projectId || DEFAULT_DB_CONFIG.projectId,
+      };
     }
   } catch (e) {
     console.error('Failed to parse saved db config', e);
@@ -60,7 +74,7 @@ export function initFirebase(config: DatabaseConfig = getSavedDbConfig()): {
 } {
   try {
     // Normalise URL
-    let dbUrl = config.databaseUrl.trim();
+    let dbUrl = (config.databaseUrl || DEFAULT_DB_CONFIG.databaseUrl).trim();
     if (!dbUrl.startsWith('http://') && !dbUrl.startsWith('https://')) {
       dbUrl = `https://${dbUrl}`;
     }
@@ -69,9 +83,14 @@ export function initFirebase(config: DatabaseConfig = getSavedDbConfig()): {
     }
 
     const firebaseConfig = {
+      apiKey: config.apiKey || DEFAULT_DB_CONFIG.apiKey,
+      authDomain: config.authDomain || DEFAULT_DB_CONFIG.authDomain,
       databaseURL: dbUrl,
-      projectId: config.projectId || 'trippal-70d7d',
-      apiKey: config.apiKey || undefined,
+      projectId: config.projectId || DEFAULT_DB_CONFIG.projectId,
+      storageBucket: config.storageBucket || DEFAULT_DB_CONFIG.storageBucket,
+      messagingSenderId: config.messagingSenderId || DEFAULT_DB_CONFIG.messagingSenderId,
+      appId: config.appId || DEFAULT_DB_CONFIG.appId,
+      measurementId: config.measurementId || DEFAULT_DB_CONFIG.measurementId,
     };
 
     if (getApps().length > 0) {
@@ -282,12 +301,19 @@ export async function signInUser(
     return { success: false, error: '請輸入有效的 Email 與密碼' };
   }
 
+  const effectiveConfig: DatabaseConfig = {
+    ...DEFAULT_DB_CONFIG,
+    ...config,
+    apiKey: config.apiKey || DEFAULT_DB_CONFIG.apiKey,
+    databaseUrl: config.databaseUrl || DEFAULT_DB_CONFIG.databaseUrl,
+  };
+
   // Generate unique session identifier for this new login
   const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
   // 1. Try Firebase Auth SDK
-  const { auth } = initFirebase(config);
-  if (auth && config.apiKey) {
+  const { auth } = initFirebase(effectiveConfig);
+  if (auth && effectiveConfig.apiKey) {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, trimmedPass);
       const fbUser = userCredential.user;
@@ -301,7 +327,7 @@ export async function signInUser(
       };
       
       saveStoredAuthUser(appUser);
-      await registerUserSession(appUser.email, sessionId, config);
+      await registerUserSession(appUser.email, sessionId, effectiveConfig);
       return { success: true, user: appUser };
     } catch (fbErr: any) {
       console.warn('Firebase Auth SDK signIn failed:', fbErr.code, fbErr.message);
@@ -347,10 +373,10 @@ export async function signInUser(
 
   // 2. Direct Firebase Authentication REST API Verification (Google Identity Toolkit)
   // Uses official endpoint: identitytoolkit.googleapis.com/v1/accounts:signInWithPassword
-  if (config.apiKey) {
+  if (effectiveConfig.apiKey) {
     try {
       const restEndpoint = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(
-        config.apiKey
+        effectiveConfig.apiKey
       )}`;
       const res = await fetch(restEndpoint, {
         method: 'POST',
@@ -376,7 +402,7 @@ export async function signInUser(
         };
 
         saveStoredAuthUser(appUser);
-        await registerUserSession(appUser.email, sessionId, config);
+        await registerUserSession(appUser.email, sessionId, effectiveConfig);
         return { success: true, user: appUser };
       } else {
         const errMsg = data.error?.message || '';

@@ -30,7 +30,12 @@ export interface DatabaseConfig {
   databaseUrl: string;
   roomKey: string;
   apiKey?: string;
+  authDomain?: string;
   projectId?: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId?: string;
+  measurementId?: string;
 }
 
 export type MapTileProvider = 'osm' | 'cartoVoyager' | 'cartoDark' | 'topo' | 'satellite';
